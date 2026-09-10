@@ -1,0 +1,58 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOwner() {
+      return request.auth != null
+        && request.auth.uid == "QlDElYYlYTP2AqvcpHoHc74cG162";
+    }
+
+    match /cafe/{docId} {
+      allow read, write: if isOwner();
+    }
+
+    match /mobile_inventory_requests/{docId} {
+      allow read, write: if isOwner();
+    }
+
+    match /mobile_receipt_requests/{docId} {
+      allow read, write: if isOwner();
+    }
+
+    match /mobile_expense_requests/{docId} {
+      allow read, write: if isOwner();
+    }
+
+    match /workers/{docId} {
+      allow read, write: if isOwner();
+    }
+
+    match /shift_schedules/{docId} {
+      allow read, write: if isOwner();
+    }
+
+    match /shift_sessions/{docId} {
+      allow read, write: if isOwner();
+    }
+
+    match /worker_ratings/{docId} {
+      allow read, write: if isOwner();
+    }
+
+    match /shift_handover/{docId} {
+      allow read, write: if isOwner();
+    }
+
+    match /inventory_edit_notifications/{docId} {
+      allow read, write: if isOwner();
+    }
+
+    match /worker_receipt_notifications/{docId} {
+      allow read, write: if isOwner();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

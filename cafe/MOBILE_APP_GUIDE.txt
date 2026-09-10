@@ -1,0 +1,841 @@
+# Mobile App Implementation Guide
+# Complete Documentation for Flexible Shift System
+# ================================================
+
+## OVERVIEW
+This guide contains all the changes made to the desktop app for implementing the flexible shift system. Use this to implement the same features in your mobile app.
+
+## ================================================
+# DATABASE SCHEMA CHANGES
+## ================================================
+
+### 1. WORKERS TABLE (Replace old cashiers table)
+```sql
+CREATE TABLE IF NOT EXISTS workers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    active BOOLEAN DEFAULT 1,
+    rating REAL DEFAULT 0,
+    total_ratings INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+```
+
+**Firebase/Firestore:**
+Collection: "workers"
+Document structure:
+{
+    "name": "string (required, unique)",
+    "active": "boolean (default: true)",
+    "rating": "number (default: 0)",
+    "total_ratings": "number (default: 0)",
+    "created_at": "timestamp (server timestamp)"
+}
+
+### 2. SHIFT SCHEDULES TABLE (NEW - Owner sets these)
+```sql
+CREATE TABLE IF NOT EXISTS shift_schedules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    shift_type TEXT NOT NULL CHECK(shift_type IN ('morning', 'night')),
+    start_hour INTEGER NOT NULL,
+    end_hour INTEGER NOT NULL,
+    allowed_workers TEXT,
+    is_active BOOLEAN DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+```
+
+**Firebase/Firestore:**
+Collection: "shift_schedules"
+Document structure:
+{
+    "name": "string (required)",
+    "shift_type": "string ('morning' or 'night')",
+    "start_hour": "number (0-23)",
+    "end_hour": "number (0-23)",
+    "allowed_workers": "string (comma-separated worker IDs, optional)",
+    "is_active": "boolean (default: true)",
+    "created_at": "timestamp (server timestamp)",
+    "updated_at": "timestamp"
+}
+
+### 3. SHIFT SESSIONS TABLE (NEW - Workers create these)
+```sql
+CREATE TABLE IF NOT EXISTS shift_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    schedule_id INTEGER NOT NULL,
+    worker_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT,
+    status TEXT DEFAULT 'active' CHECK(status IN ('active', 'completed')),
+    total_sales REAL DEFAULT 0,
+    total_revenue REAL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(schedule_id) REFERENCES shift_schedules(id),
+    FOREIGN KEY(worker_id) REFERENCES workers(id)
+)
+```
+
+**Firebase/Firestore:**
+Collection: "shift_sessions"
+Document structure:
+{
+    "schedule_id": "string (reference to shift_schedules)",
+    "schedule_name": "string (denormalized for queries)",
+    "worker_id": "string (reference to workers)",
+    "worker_name": "string (denormalized)",
+    "date": "string (YYYY-MM-DD format)",
+    "start_time": "string (ISO format)",
+    "end_time": "string (ISO format, null if active)",
+    "status": "string ('active' or 'completed')",
+    "total_sales": "number (default: 0)",
+    "total_revenue": "number (default: 0)",
+    "created_at": "timestamp (server timestamp)",
+    "updated_at": "timestamp"
+}
+
+### 4. WORKER RATINGS TABLE (NEW)
+```sql
+CREATE TABLE IF NOT EXISTS worker_ratings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    worker_id INTEGER NOT NULL,
+    session_id INTEGER,
+    rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+    notes TEXT,
+    created_by TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(worker_id) REFERENCES workers(id),
+    FOREIGN KEY(session_id) REFERENCES shift_sessions(id)
+)
+```
+
+**Firebase/Firestore:**
+Collection: "worker_ratings"
+Document structure:
+{
+    "worker_id": "string (reference to workers)",
+    "worker_name": "string (denormalized)",
+    "session_id": "string (reference to shift_sessions, optional)",
+    "rating": "number (1-5)",
+    "notes": "string (optional)",
+    "created_by": "string (owner name)",
+    "created_at": "timestamp (server timestamp)"
+}
+
+### 5. RECEIPTS TABLE - Updated Columns
+```sql
+ALTER TABLE receipts ADD COLUMN worker_id INTEGER
+ALTER TABLE receipts ADD COLUMN session_id INTEGER
+-- Keep existing shift_type column
+```
+
+**Firebase/Firestore:**
+Update "receipts" collection documents:
+{
+    "worker_id": "string (reference to workers)",
+    "worker_name": "string (denormalized)",
+    "session_id": "string (reference to shift_sessions)",
+    "shift_type": "string ('morning' or 'night')"
+}
+
+### 6. SHIFT HANDOVER TABLE - Updated References
+```sql
+CREATE TABLE IF NOT EXISTS shift_handover (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_session_id INTEGER NOT NULL,
+    to_session_id INTEGER NOT NULL,
+    notes TEXT,
+    cash_handover REAL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(from_session_id) REFERENCES shift_sessions(id),
+    FOREIGN KEY(to_session_id) REFERENCES shift_sessions(id)
+)
+```
+
+**Firebase/Firestore:**
+Collection: "shift_handover"
+Document structure:
+{
+    "from_session_id": "string (reference to shift_sessions)",
+    "from_worker_name": "string (denormalized)",
+    "to_session_id": "string (reference to shift_sessions)",
+    "to_worker_name": "string (denormalized)",
+    "notes": "string",
+    "cash_handover": "number",
+    "created_at": "timestamp (server timestamp)"
+}
+
+## ================================================
+# DATABASE MIGRATION
+## ================================================
+
+### Desktop Migration Script (Python)
+```python
+def migrate_to_flexible_system():
+    """Migrate existing data to flexible shift system"""
+    
+    # 1. Add new columns to receipts
+    cur.execute("ALTER TABLE receipts ADD COLUMN worker_id INTEGER")
+    cur.execute("ALTER TABLE receipts ADD COLUMN session_id INTEGER")
+    
+    # 2. Create default worker if none exists
+    cur.execute("SELECT COUNT(*) FROM workers")
+    if cur.fetchone()[0] == 0:
+        cur.execute("INSERT INTO workers (name, active) VALUES ('عامل افتراضي', 1)")
+        default_worker_id = cur.lastrowid
+    else:
+        cur.execute("SELECT id FROM workers LIMIT 1")
+        default_worker_id = cur.fetchone()[0]
+    
+    # 3. Create default shift schedules if none exist
+    cur.execute("SELECT COUNT(*) FROM shift_schedules")
+    if cur.fetchone()[0] == 0:
+        cur.execute("INSERT INTO shift_schedules (name, shift_type, start_hour, end_hour, is_active) VALUES ('وردية صباحية', 'morning', 6, 14, 1)")
+        morning_id = cur.lastrowid
+        cur.execute("INSERT INTO shift_schedules (name, shift_type, start_hour, end_hour, is_active) VALUES ('وردية ليلية', 'night', 14, 22, 1)")
+        night_id = cur.lastrowid
+    else:
+        cur.execute("SELECT id FROM shift_schedules WHERE shift_type='morning' LIMIT 1")
+        morning_id = cur.fetchone()[0] if cur.fetchone() else None
+        cur.execute("SELECT id FROM shift_schedules WHERE shift_type='night' LIMIT 1")
+        night_id = cur.fetchone()[0] if cur.fetchone() else None
+    
+    # 4. Migrate existing receipts
+    cur.execute("SELECT id, date, cashier_id, shift_id FROM receipts WHERE worker_id IS NULL")
+    old_receipts = cur.fetchall()
+    
+    for receipt_id, receipt_date, old_cashier_id, old_shift_id in old_receipts:
+        try:
+            dt = datetime.fromisoformat(receipt_date) if receipt_date else datetime.now()
+            hour = dt.hour
+            date_str = dt.date().isoformat()
+            
+            # Determine schedule based on time
+            if 6 <= hour < 14:
+                schedule_id = morning_id
+                shift_type = 'morning'
+            elif 14 <= hour < 22:
+                schedule_id = night_id
+                shift_type = 'night'
+            else:
+                schedule_id = night_id  # default to night
+                shift_type = 'night'
+            
+            # Find or create session
+            cur.execute("""
+                SELECT id FROM shift_sessions
+                WHERE schedule_id = ? AND date = ? AND status = 'active'
+                LIMIT 1
+            """, (schedule_id, date_str))
+            session = cur.fetchone()
+            
+            if not session:
+                cur.execute("""
+                    INSERT INTO shift_sessions (schedule_id, worker_id, date, start_time, status)
+                    VALUES (?, ?, ?, ?, 'completed')
+                """, (schedule_id, default_worker_id, date_str, receipt_date))
+                session_id = cur.lastrowid
+            else:
+                session_id = session[0]
+            
+            # Update receipt
+            cur.execute("""
+                UPDATE receipts
+                SET worker_id = ?, session_id = ?, shift_type = ?
+                WHERE id = ?
+            """, (default_worker_id, session_id, shift_type, receipt_id))
+            
+        except Exception as e:
+            print(f"Migration error for receipt {receipt_id}: {e}")
+    
+    conn.commit()
+    print("Migration completed successfully!")
+```
+
+### Mobile Migration (Firebase)
+```javascript
+// Run this once in Firebase Console or mobile app
+async function migrateToFlexibleSystem() {
+    const db = firebase.firestore();
+    
+    // 1. Create default worker if none exists
+    const workersSnapshot = await db.collection('workers').limit(1).get();
+    if (workersSnapshot.empty) {
+        await db.collection('workers').add({
+            name: 'عامل افتراضي',
+            active: true,
+            rating: 0,
+            total_ratings: 0,
+            created_at: firebase.firestore.FieldValue.serverTimestamp()
+        });
+    }
+    
+    // 2. Create default shift schedules
+    const schedulesSnapshot = await db.collection('shift_schedules').limit(1).get();
+    if (schedulesSnapshot.empty) {
+        await db.collection('shift_schedules').add({
+            name: 'وردية صباحية',
+            shift_type: 'morning',
+            start_hour: 6,
+            end_hour: 14,
+            is_active: true,
+            created_at: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        
+        await db.collection('shift_schedules').add({
+            name: 'وردية ليلية',
+            shift_type: 'night',
+            start_hour: 14,
+            end_hour: 22,
+            is_active: true,
+            created_at: firebase.firestore.FieldValue.serverTimestamp()
+        });
+    }
+    
+    // 3. Migrate existing receipts
+    const receiptsSnapshot = await db.collection('receipts').where('worker_id', '==', null).get();
+    
+    const workers = await db.collection('workers').get();
+    const defaultWorker = workers.docs[0];
+    
+    const schedules = await db.collection('shift_schedules').get();
+    const morningSchedule = schedules.docs.find(s => s.data().shift_type === 'morning');
+    const nightSchedule = schedules.docs.find(s => s.data().shift_type === 'night');
+    
+    const batch = db.batch();
+    
+    for (const doc of receiptsSnapshot.docs) {
+        const receipt = doc.data();
+        const date = receipt.date ? new Date(receipt.date) : new Date();
+        const hour = date.getHours();
+        
+        let scheduleId, shiftType;
+        if (hour >= 6 && hour < 14) {
+            scheduleId = morningSchedule.id;
+            shiftType = 'morning';
+        } else {
+            scheduleId = nightSchedule.id;
+            shiftType = 'night';
+        }
+        
+        const dateStr = date.toISOString().split('T')[0];
+        
+        // Find or create session
+        const sessionQuery = await db.collection('shift_sessions')
+            .where('schedule_id', '==', scheduleId)
+            .where('date', '==', dateStr)
+            .where('status', '==', 'active')
+            .limit(1)
+            .get();
+        
+        let sessionId;
+        if (sessionQuery.empty) {
+            const newSessionRef = db.collection('shift_sessions').doc();
+            batch.set(newSessionRef, {
+                schedule_id: scheduleId,
+                schedule_name: shiftType === 'morning' ? morningSchedule.data().name : nightSchedule.data().name,
+                worker_id: defaultWorker.id,
+                worker_name: defaultWorker.data().name,
+                date: dateStr,
+                start_time: date.toISOString(),
+                status: 'completed',
+                total_sales: 0,
+                total_revenue: 0,
+                created_at: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            sessionId = newSessionRef.id;
+        } else {
+            sessionId = sessionQuery.docs[0].id;
+        }
+        
+        batch.update(doc.ref, {
+            worker_id: defaultWorker.id,
+            worker_name: defaultWorker.data().name,
+            session_id: sessionId,
+            shift_type: shiftType
+        });
+    }
+    
+    await batch.commit();
+    console.log('Migration completed!');
+}
+```
+
+## ================================================
+# APP MODE SYSTEM
+## ================================================
+
+### App States
+- `app_mode`: null initially, then "owner" or "worker"
+- `current_worker`: {} for active worker session
+- `current_session`: {} for active shift session
+
+### Mode Selection Flow
+1. **App Launch**: Show mode selection UI (Owner vs Worker)
+2. **Owner Mode**: 
+   - Requires password (default: "1986")
+   - Full access to all features
+   - Can manage workers, schedules, ratings
+3. **Worker Mode**:
+   - No password required
+   - Must select available shift and enter name
+   - Limited access (no password-protected sections)
+   - Can work in cashier only
+
+### Mode Change Button
+- Located in top navigation
+- Shows current mode with icon (👨‍💼 for owner, 👷 for worker)
+- Allows switching between modes
+- If switching to owner: requires password
+- If switching to worker: requires shift assignment
+
+## ================================================
+# NAVIGATION & ACCESS CONTROL
+## ================================================
+
+### Desktop Navigation (main.py)
+```python
+# Password-protected sections (owner only):
+- "فواتير" (Receipts)
+- "بيانات" (Analytics) 
+- "المخزن" (Inventory)
+- "ديون" (Debts)
+- "هدر" (Waste)
+- "ورديات" (Shifts)
+- "تقييم العمال" (Worker Ratings)
+
+# Non-protected sections (available to both):
+- "كاشير" (Cashier)
+- "مكونات" (Ingredients)
+```
+
+### Mobile Navigation Implementation
+```javascript
+// In your navigation component
+const navigationItems = [
+    { id: 'cashier', title: 'كاشير', requiresAuth: false },
+    { id: 'receipts', title: 'فواتير', requiresAuth: true },
+    { id: 'analytics', title: 'بيانات', requiresAuth: true },
+    { id: 'inventory', title: 'المخزن', requiresAuth: true },
+    { id: 'ingredients', title: 'مكونات', requiresAuth: false },
+    { id: 'debts', title: 'ديون', requiresAuth: true },
+    { id: 'waste', title: 'هدر', requiresAuth: true },
+    { id: 'shifts', title: 'ورديات', requiresAuth: true },
+    { id: 'ratings', title: 'تقييم العمال', requiresAuth: true },
+];
+
+// Filter based on mode
+const availableItems = appMode === 'owner' 
+    ? navigationItems 
+    : navigationItems.filter(item => !item.requiresAuth);
+```
+
+## ================================================
+# SHIFT SYSTEM LOGIC
+## ================================================
+
+### Shift Schedule Logic (Owner Sets)
+- **Morning Shift**: 6:00 AM - 2:00 PM (hour 6-14)
+- **Night Shift**: 2:00 PM - 10:00 PM (hour 14-22)
+- Owner can customize hours per schedule
+- Owner can specify which workers can work which shifts
+- Shifts are "inactive" until a worker starts a session
+
+### Shift Session Logic (Workers Create)
+1. Worker selects available shift (based on current time)
+2. Worker selects their name from active workers list
+3. System checks if worker is allowed in this shift
+4. Session created with status "active"
+5. All receipts during this session linked to this session
+6. Worker can end session anytime
+7. System calculates total sales/revenue when session ends
+
+### Time-Based Shift Warnings
+- Check every minute if current session's shift time has ended
+- Show warning popup when shift ends
+- Worker can:
+  - Continue working (counts for them until next worker comes)
+  - End their session
+- Warning resets when entering valid shift time
+
+### Available Shifts Calculation
+```python
+def get_available_schedules_for_current_time():
+    current_hour = datetime.now().hour
+    
+    cur.execute("""
+        SELECT * FROM shift_schedules
+        WHERE is_active = 1
+        AND start_hour <= ? AND end_hour > ?
+        ORDER BY start_hour
+    """, (current_hour, current_hour))
+```
+
+## ================================================
+# WORKER RATING SYSTEM
+## ================================================
+
+### Rating Storage
+- Each rating stored in worker_ratings table
+- Links to worker and optional session
+- Rating 1-5 stars
+- Optional notes
+- Records who created the rating
+
+### Average Rating Calculation
+```python
+def update_worker_average_rating(worker_id):
+    cur.execute("""
+        SELECT AVG(rating), COUNT(*)
+        FROM worker_ratings
+        WHERE worker_id = ?
+    """, (worker_id,))
+    avg_rating, count = cur.fetchone()
+    
+    if avg_rating:
+        cur.execute("""
+            UPDATE workers
+            SET rating = ?, total_ratings = ?
+            WHERE id = ?
+        """, (avg_rating, count, worker_id))
+```
+
+### Rating UI Components
+1. **Workers List**: Shows all workers with ratings
+2. **Rate Button**: Opens rating dialog (owner only)
+3. **Rating Dialog**: 1-5 star selection + notes
+4. **Details View**: Shows worker performance stats + rating history
+
+## ================================================
+# FIREBASE SYNC IMPLEMENTATION
+## ================================================
+
+### Sync Functions to Add (firebase_sync.py)
+
+```python
+def sync_worker_to_firebase(worker_id):
+    """Sync a single worker to Firebase"""
+    cur.execute("SELECT * FROM workers WHERE id=?", (worker_id,))
+    worker = cur.fetchone()
+    if not worker:
+        return
+    
+    doc_ref = db.collection('workers').document(str(worker_id))
+    doc_ref.set({
+        'name': worker[1],
+        'active': bool(worker[2]),
+        'rating': worker[3] or 0,
+        'total_ratings': worker[4] or 0,
+        'created_at': worker[5]
+    }, merge=True)
+    
+    cur.execute("DELETE FROM sync_queue WHERE table_name='workers' AND record_id=?", (worker_id,))
+    conn.commit()
+
+def sync_schedule_to_firebase(schedule_id):
+    """Sync a single shift schedule to Firebase"""
+    cur.execute("SELECT * FROM shift_schedules WHERE id=?", (schedule_id,))
+    schedule = cur.fetchone()
+    if not schedule:
+        return
+    
+    doc_ref = db.collection('shift_schedules').document(str(schedule_id))
+    doc_ref.set({
+        'name': schedule[1],
+        'shift_type': schedule[2],
+        'start_hour': schedule[3],
+        'end_hour': schedule[4],
+        'allowed_workers': schedule[5],
+        'is_active': bool(schedule[6]),
+        'created_at': schedule[7],
+        'updated_at': schedule[8]
+    }, merge=True)
+    
+    cur.execute("DELETE FROM sync_queue WHERE table_name='shift_schedules' AND record_id=?", (schedule_id,))
+    conn.commit()
+
+def sync_session_to_firebase(session_id):
+    """Sync a single shift session to Firebase"""
+    cur.execute("""
+        SELECT ss.*, w.name as worker_name, s.name as schedule_name
+        FROM shift_sessions ss
+        JOIN workers w ON ss.worker_id = w.id
+        JOIN shift_schedules s ON ss.schedule_id = s.id
+        WHERE ss.id=?
+    """, (session_id,))
+    session = cur.fetchone()
+    if not session:
+        return
+    
+    doc_ref = db.collection('shift_sessions').document(str(session_id))
+    doc_ref.set({
+        'schedule_id': str(session[1]),
+        'schedule_name': session[11],
+        'worker_id': str(session[2]),
+        'worker_name': session[10],
+        'date': session[3],
+        'start_time': session[4],
+        'end_time': session[5],
+        'status': session[6],
+        'total_sales': session[7] or 0,
+        'total_revenue': session[8] or 0,
+        'created_at': session[9],
+        'updated_at': session[10]
+    }, merge=True)
+    
+    cur.execute("DELETE FROM sync_queue WHERE table_name='shift_sessions' AND record_id=?", (session_id,))
+    conn.commit()
+
+def sync_rating_to_firebase(rating_id):
+    """Sync a single worker rating to Firebase"""
+    cur.execute("""
+        SELECT wr.*, w.name as worker_name
+        FROM worker_ratings wr
+        JOIN workers w ON wr.worker_id = w.id
+        WHERE wr.id=?
+    """, (rating_id,))
+    rating = cur.fetchone()
+    if not rating:
+        return
+    
+    doc_ref = db.collection('worker_ratings').document(str(rating_id))
+    doc_ref.set({
+        'worker_id': str(rating[1]),
+        'worker_name': rating[10],
+        'session_id': str(rating[2]) if rating[2] else None,
+        'rating': rating[3],
+        'notes': rating[4],
+        'created_by': rating[5],
+        'created_at': rating[6]
+    }, merge=True)
+    
+    cur.execute("DELETE FROM sync_queue WHERE table_name='worker_ratings' AND record_id=?", (rating_id,))
+    conn.commit()
+```
+
+### Mobile Firebase Listeners
+```javascript
+// Workers listener
+firebase.firestore().collection('workers')
+    .onSnapshot((snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+            if (change.type === "added") {
+                localDB.insertWorker(change.doc.data(), change.doc.id);
+            } else if (change.type === "modified") {
+                localDB.updateWorker(change.doc.data(), change.doc.id);
+            } else if (change.type === "removed") {
+                localDB.deleteWorker(change.doc.id);
+            }
+        });
+    });
+
+// Shift schedules listener
+firebase.firestore().collection('shift_schedules')
+    .where('is_active', '==', true)
+    .onSnapshot((snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+            if (change.type === "added" || change.type === "modified") {
+                localDB.upsertSchedule(change.doc.data(), change.doc.id);
+            }
+        });
+    });
+
+// Shift sessions listener (today's sessions)
+const today = new Date().toISOString().split('T')[0];
+firebase.firestore().collection('shift_sessions')
+    .where('date', '>=', today)
+    .onSnapshot((snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+            if (change.type === "added" || change.type === "modified") {
+                localDB.upsertSession(change.doc.data(), change.doc.id);
+            }
+        });
+    });
+
+// Receipts listener (with worker/session data)
+firebase.firestore().collection('receipts')
+    .orderBy('date', 'desc')
+    .limit(50)
+    .onSnapshot((snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+            if (change.type === "added" || change.type === "modified") {
+                localDB.upsertReceipt(change.doc.data(), change.doc.id);
+            }
+        });
+    });
+
+// Worker ratings listener
+firebase.firestore().collection('worker_ratings')
+    .orderBy('created_at', 'desc')
+    .limit(100)
+    .onSnapshot((snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+            if (change.type === "added") {
+                localDB.insertRating(change.doc.data(), change.doc.id);
+            }
+        });
+    });
+```
+
+## ================================================
+# MOBILE APP IMPLEMENTATION CHECKLIST
+## ================================================
+
+### Phase 1: Database & Sync
+- [ ] Update Firebase schema with new collections
+- [ ] Implement data migration script
+- [ ] Set up Firebase listeners for new collections
+- [ ] Test bidirectional sync
+
+### Phase 2: Mode System
+- [ ] Create mode selection screen (owner/worker)
+- [ ] Implement password protection for owner mode
+- [ ] Add mode change button in navigation
+- [ ] Implement access control based on mode
+- [ ] Store current mode in app state
+
+### Phase 3: Shift System
+- [ ] Create shift schedules management screen (owner only)
+- [ ] Create workers management screen (owner only)
+- [ ] Implement worker shift assignment screen
+- [ ] Add shift time checking and warnings
+- [ ] Handle shift session lifecycle (start/end)
+
+### Phase 4: Worker Ratings
+- [ ] Create worker ratings screen (owner only)
+- [ ] Implement rating dialog (1-5 stars)
+- [ ] Add worker performance stats display
+- [ ] Show rating history per worker
+
+### Phase 5: Integration
+- [ ] Update all screens to use new shift system
+- [ ] Link receipts to sessions instead of old shifts
+- [ ] Update analytics to show session-based data
+- [ ] Test complete workflow
+
+### Phase 6: UI/UX
+- [ ] Ensure Arabic RTL support throughout
+- [ ] Implement responsive design
+- [ ] Add loading states and error handling
+- [ ] Optimize for mobile touch interface
+
+## ================================================
+# KEY DIFFERENCES FROM OLD SYSTEM
+## ================================================
+
+### Old System:
+- Fixed cashiers assigned to fixed shifts
+- Shifts had fixed start/end times
+- Cashiers always linked to receipts
+- No worker performance tracking
+
+### New System:
+- Flexible shift schedules set by owner
+- Workers self-assign to available shifts
+- Shifts only active when worker present
+- Worker ratings and performance tracking
+- Mode-based access control
+- Time-based shift warnings
+- Session-based sales tracking
+
+## ================================================
+# TESTING SCENARIOS
+## ================================================
+
+### Scenario 1: Owner Sets Up System
+1. Launch app → Select "Owner Mode" → Enter password
+2. Go to "ورديات" → Create shift schedules (morning 6-14, night 14-22)
+3. Go to "ورديات" → Add workers (Ali, Mohammed, Sara)
+4. Test that all sections are accessible
+
+### Scenario 2: Worker Starts Shift
+1. Launch app → Select "Worker Mode"
+2. See available shifts for current time
+3. Select "Morning Shift" → Enter name "Ali"
+4. Session starts → Can only access "كاشير" and "مكونات"
+5. Make some sales → Check they're linked to session
+
+### Scenario 3: Shift Time Warning
+1. Worker has active session
+2. Current time passes shift end hour
+3. Warning popup appears
+4. Worker chooses to continue working
+5. Sales still count for Ali's session
+
+### Scenario 4: Owner Rates Worker
+1. Owner mode → "تقييم العمال"
+2. See Ali's performance stats
+3. Rate Ali 5 stars with notes "Great work!"
+4. Rating saved → Ali's average updated
+
+### Scenario 5: Mode Switching
+1. Worker Ali working in morning shift
+2. Owner arrives → Click mode change button
+3. Enter password → Switch to owner mode
+4. Can now access all sections
+5. Later switch back to worker mode → Must select shift again
+
+## ================================================
+# API ENDPOINTS (if you have backend)
+## ================================================
+
+POST /api/workers - Create worker
+GET /api/workers - List workers
+PUT /api/workers/:id - Update worker
+DELETE /api/workers/:id - Delete worker
+
+POST /api/shift-schedules - Create schedule
+GET /api/shift-schedules - List schedules
+PUT /api/shift-schedules/:id - Update schedule
+DELETE /api/shift-schedules/:id - Delete schedule
+
+POST /api/shift-sessions - Start session
+GET /api/shift-sessions/active - Get active session
+PUT /api/shift-sessions/:id/end - End session
+
+POST /api/worker-ratings - Add rating
+GET /api/worker-ratings/:worker_id - Get worker ratings
+GET /api/workers/performance/:id - Get worker stats
+
+## ================================================
+# FILE STRUCTURE CHANGES
+## ================================================
+
+### Desktop (Python):
+- `adb.py` - Updated with new tables and functions
+- `state.py` - Added app_mode, current_worker, current_session
+- `main.py` - Added mode selection and access control
+- `modules/shifts.py` - Complete rewrite for flexible system
+- `modules/worker_ratings.py` - New file for rating system
+- `modules/shift_timer.py` - New file for time checking
+- `modules/cashier.py` - Updated to use sessions instead of shifts
+- `modules/analytics.py` - Updated to show session data
+
+### Mobile (expected):
+- Similar structure with Firebase integration
+- Mode management component
+- Shift management screens
+- Worker rating screens
+- Time checking service
+
+## ================================================
+# IMPORTANT NOTES
+## ================================================
+
+1. **Backward Compatibility**: Migration script handles existing data
+2. **Password Security**: Owner password should be changed in production
+3. **Time Zone**: Ensure consistent timezone handling across devices
+4. **Offline Support**: Mobile app should work without Firebase sync
+5. **Data Validation**: Validate all shift times and worker assignments
+6. **Error Handling**: Handle cases where no shifts are available
+7. **User Experience**: Clear feedback for mode changes and shift warnings
+
+## ================================================
+# END OF DOCUMENTATION
+## ================================================
+
+This documentation provides everything needed to implement the flexible shift system in the mobile app. Follow the checklist and testing scenarios to ensure complete functionality.

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "571496457659",
+    "project_id": "caferoom",
+    "storage_bucket": "caferoom.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:571496457659:android:5c800b13d8dcef47f9909e",
+        "android_client_info": {
+          "package_name": "com.CoffeShop"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAZU0wu0ngBY_0gBRUZPdOuxOOCNopdoqE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

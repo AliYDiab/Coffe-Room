@@ -1,0 +1,35 @@
+name: caferoom_owner
+description: CafeRoom Owner Dashboard
+ 
+publish_to: 'none'
+version: 1.6.0+6
+ 
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+ 
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: ^4.10.0
+  firebase_auth: ^6.1.0
+  cloud_firestore: ^6.5.0
+  firebase_messaging: ^16.3.0
+  fl_chart: ^1.2.0
+  intl: ^0.20.2
+  google_fonts: ^8.1.0
+  shimmer: ^3.0.0
+  timeago: ^3.6.1
+  pdf: ^3.13.0
+  printing: ^5.15.0
+  package_info_plus: ^10.2.1
+ 
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+ 
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/fonts/NotoSansArabic-Regular.ttf
+    - assets/fonts/NotoSansArabic-Bold.ttf

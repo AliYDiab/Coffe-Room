@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>POS Scanner</title>
+
+  <script type="module">
+    import { BrowserMultiFormatReader } from "https://cdn.jsdelivr.net/npm/@zxing/browser@latest/+esm";
+
+    const codeReader = new BrowserMultiFormatReader();
+    let controls = null;
+    let running = false;
+
+    let lastCode = "";
+    let lastTime = 0;
+
+    const ui = {
+      startScreen: null,
+      scannerScreen: null,
+      video: null,
+      status: null,
+      lastScan: null,
+      flash: null,
+      startBtn: null,
+      stopBtn: null
+    };
+
+    function setStatus(text, tone = "neutral") {
+      ui.status.textContent = text;
+      ui.status.dataset.tone = tone;
+    }
+
+    function flash() {
+      ui.flash.classList.add("active");
+      setTimeout(() => ui.flash.classList.remove("active"), 140);
+    }
+
+    function beep() {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.type = "sine";
+        osc.frequency.value = 1200;
+        gain.gain.value = 0.03;
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start();
+        setTimeout(() => {
+          osc.stop();
+          ctx.close();
+        }, 70);
+      } catch (e) {}
+    }
+
+    function vibrate() {
+      if (navigator.vibrate) navigator.vibrate(80);
+    }
+
+    async function sendToServer(code) {
+      try {
+        const res = await fetch("/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code })
+        });
+
+        if (!res.ok) {
+          console.warn("Server error");
+        }
+      } catch (err) {
+        console.error("Send failed:", err);
+        setStatus("Server unreachable", "error");
+      }
+    }
+
+    async function onScanSuccess(decodedText) {
+      const code = String(decodedText || "").trim();
+      const now = Date.now();
+
+      if (!code) return;
+
+      if (code === lastCode && (now - lastTime) < 900) {
+        return;
+      }
+
+      lastCode = code;
+      lastTime = now;
+
+      ui.lastScan.textContent = code;
+      setStatus("Scanned successfully", "ok");
+
+      beep();
+      vibrate();
+      flash();
+
+      await sendToServer(code);
+    }
+
+    async function startScanner() {
+      if (running) return;
+
+      try {
+        running = true;
+        ui.startBtn.disabled = true;
+        ui.stopBtn.disabled = false;
+        setStatus("Requesting camera...", "neutral");
+
+        document.body.classList.add("scanning");
+        ui.startScreen.style.display = "none";
+        ui.scannerScreen.style.display = "block";
+
+        controls = await codeReader.decodeFromVideoDevice(
+          undefined,
+          ui.video,
+          (result, err) => {
+            if (result) {
+              onScanSuccess(result.getText());
+            }
+          }
+        );
+
+        setStatus("Scanner ready", "ok");
+      } catch (err) {
+        console.error(err);
+        running = false;
+        ui.startBtn.disabled = false;
+        ui.stopBtn.disabled = true;
+        ui.startScreen.style.display = "flex";
+        ui.scannerScreen.style.display = "none";
+        setStatus("Camera permission failed", "error");
+      }
+    }
+
+    async function stopScanner() {
+      try {
+        if (controls) {
+          await controls.stop();
+          controls = null;
+        }
+      } catch (e) {}
+
+      running = false;
+      ui.startBtn.disabled = false;
+      ui.stopBtn.disabled = true;
+      ui.startScreen.style.display = "flex";
+      ui.scannerScreen.style.display = "none";
+      setStatus("Scanner stopped", "neutral");
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      ui.startScreen = document.getElementById("startScreen");
+      ui.scannerScreen = document.getElementById("scannerScreen");
+      ui.video = document.getElementById("video");
+      ui.status = document.getElementById("status");
+      ui.lastScan = document.getElementById("lastScan");
+      ui.flash = document.getElementById("flash");
+      ui.startBtn = document.getElementById("startBtn");
+      ui.stopBtn = document.getElementById("stopBtn");
+
+      ui.startBtn.addEventListener("click", startScanner);
+      ui.stopBtn.addEventListener("click", stopScanner);
+
+      // one tap on the page also starts the camera on mobile
+      ui.startScreen.addEventListener("click", startScanner, { once: false });
+
+      setStatus("Tap Start Scanner", "neutral");
+    });
+  </script>
+
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: rgba(15, 23, 42, 0.82);
+      --panel-2: rgba(17, 24, 39, 0.92);
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --green: #22c55e;
+      --blue: #2563eb;
+      --red: #ef4444;
+      --yellow: #f59e0b;
+      --border: rgba(148, 163, 184, 0.22);
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at top, rgba(37, 99, 235, 0.25), transparent 30%),
+        radial-gradient(circle at bottom, rgba(34, 197, 94, 0.10), transparent 35%),
+        var(--bg);
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+    }
+
+    body.scanning {
+      background: #000;
+    }
+
+    #startScreen,
+    #scannerScreen {
+      position: fixed;
+      inset: 0;
+    }
+
+    #startScreen {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 20;
+      background:
+        linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.72)),
+        radial-gradient(circle at center, rgba(34, 197, 94, 0.14), transparent 40%);
+      backdrop-filter: blur(16px);
+    }
+
+    .start-card {
+      width: min(100%, 420px);
+      border: 1px solid var(--border);
+      background: rgba(15, 23, 42, 0.78);
+      border-radius: 28px;
+      padding: 24px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .logo {
+      width: 52px;
+      height: 52px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, #2563eb, #22c55e);
+      display: grid;
+      place-items: center;
+      font-size: 24px;
+      box-shadow: 0 12px 30px rgba(37,99,235,0.3);
+    }
+
+    .title {
+      font-size: 24px;
+      font-weight: 800;
+      margin: 0;
+      line-height: 1.15;
+    }
+
+    .subtitle {
+      margin: 8px 0 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .hint {
+      margin-top: 16px;
+      padding: 14px 15px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      color: #cbd5e1;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .start-btn {
+      width: 100%;
+      height: 58px;
+      border: 0;
+      border-radius: 18px;
+      margin-top: 18px;
+      font-size: 17px;
+      font-weight: 800;
+      color: white;
+      background: linear-gradient(135deg, #2563eb, #22c55e);
+      box-shadow: 0 14px 40px rgba(37,99,235,0.24);
+    }
+
+    .start-btn:active {
+      transform: scale(0.99);
+    }
+
+    #scannerScreen {
+      display: none;
+      z-index: 5;
+      background: #000;
+    }
+
+    #video {
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      background: #000;
+    }
+
+    .topbar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 12;
+      padding: 14px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      background: linear-gradient(180deg, rgba(0,0,0,0.68), rgba(0,0,0,0.18));
+      backdrop-filter: blur(12px);
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(15,23,42,0.72);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: white;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .chip.ok {
+      color: #86efac;
+    }
+
+    .chip.error {
+      color: #fca5a5;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .icon-btn {
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(15,23,42,0.72);
+      color: white;
+      border-radius: 14px;
+      width: 44px;
+      height: 44px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .scan-frame {
+      position: absolute;
+      top: 48%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(88vw, 420px);
+      height: 170px;
+      border-radius: 20px;
+      border: 2px solid rgba(34,197,94,0.95);
+      box-shadow:
+        0 0 0 9999px rgba(0,0,0,0.58),
+        0 0 24px rgba(34,197,94,0.12);
+      pointer-events: none;
+      z-index: 9;
+    }
+
+    .scan-line {
+      position: absolute;
+      left: 18px;
+      right: 18px;
+      top: 50%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(34,197,94,1), transparent);
+      box-shadow: 0 0 14px rgba(34,197,94,0.9);
+      animation: scanMove 1.3s linear infinite;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    @keyframes scanMove {
+      0%   { transform: translateY(-52px); opacity: 0.55; }
+      50%  { opacity: 1; }
+      100% { transform: translateY(52px); opacity: 0.55; }
+    }
+
+    .bottom-panel {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 12;
+      padding: 16px;
+      background: linear-gradient(0deg, rgba(0,0,0,0.82), rgba(0,0,0,0.12));
+    }
+
+    .status-card {
+      border-radius: 22px;
+      padding: 14px 16px;
+      background: rgba(15,23,42,0.78);
+      border: 1px solid rgba(255,255,255,0.10);
+      backdrop-filter: blur(12px);
+    }
+
+    .status-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    #status {
+      font-size: 16px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    #status[data-tone="ok"] {
+      color: #86efac;
+    }
+
+    #status[data-tone="error"] {
+      color: #fca5a5;
+    }
+
+    #lastScan {
+      color: #cbd5e1;
+      font-size: 13px;
+      word-break: break-word;
+      line-height: 1.5;
+    }
+
+    .flash {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: rgba(34,197,94,0);
+      z-index: 11;
+      transition: background 0.12s ease;
+    }
+
+    .flash.active {
+      background: rgba(34,197,94,0.22);
+    }
+
+    .safe-area {
+      height: env(safe-area-inset-bottom);
+    }
+  </style>
+</head>
+
+<body>
+  <div id="startScreen">
+    <div class="start-card">
+      <div class="brand">
+        <div class="logo">📷</div>
+        <div>
+          <p class="title">POS Scanner</p>
+          <p class="subtitle">Fast barcode scanning for cashier use.</p>
+        </div>
+      </div>
+
+      <div class="hint">
+        Tap the button to start the camera.  
+        Use printed barcodes for the fastest checkout.  
+        This works best on HTTPS or ngrok links.
+      </div>
+
+      <button class="start-btn" id="startBtn">Start Scanner</button>
+    </div>
+  </div>
+
+  <div id="scannerScreen">
+    <video id="video" playsinline muted></video>
+
+    <div class="topbar">
+      <div class="chip" id="cameraChip">⌁ Camera ready</div>
+      <div class="actions">
+        <button class="icon-btn" id="stopBtn" title="Stop Scanner">⏹</button>
+      </div>
+    </div>
+
+    <div class="scan-frame">
+      <div class="scan-line"></div>
+    </div>
+
+    <div class="flash" id="flash"></div>
+
+    <div class="bottom-panel">
+      <div class="status-card">
+        <div class="status-label">Scanner status</div>
+        <div id="status" data-tone="neutral">Tap Start Scanner</div>
+        <div id="lastScan">Waiting for scan...</div>
+      </div>
+      <div class="safe-area"></div>
+    </div>
+  </div>
+</body>
+</html>

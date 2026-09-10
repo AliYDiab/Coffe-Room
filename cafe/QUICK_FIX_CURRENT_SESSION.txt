@@ -1,0 +1,102 @@
+# Quick Fix: NameError for current_session
+# إصلاح سريع: خطأ NameError لـ current_session
+
+## ================================================
+# المشكلة
+## ================================================
+
+```
+NameError: name 'current_session' is not defined
+Exception in Tkinter callback
+File "C:\Users\Ali\Desktop\cafe\main.py", line 252, in switch_to_worker
+    if app_mode == "owner" and current_session:
+                               ^^^^^^^^^^^^^^^
+NameError: name 'current_session' is not defined
+```
+
+## ================================================
+# السبب
+## ================================================
+
+في `main.py`، الدالة `switch_to_worker()` تحاول استخدام `current_session` لكنها غير مستوردة.
+
+## ================================================
+# الحل
+## ================================================
+
+### 1. إضافة الاستيرادات في main.py
+
+**قبل**:
+```python
+from state import app_mode
+```
+
+**بعد**:
+```python
+from state import app_mode, current_worker, current_session
+```
+
+### 2. تبسيط switch_to_worker
+
+**قبل**:
+```python
+def switch_to_worker():
+    # إنهاء جلسة المالك الحالية إذا كانت موجودة
+    if app_mode == "owner" and current_session:
+        print("Ending owner session for worker mode switch")
+        # المالك ليس لديه جلسة نشطة
+    
+    dialog.destroy()
+    enter_worker_mode(root)
+```
+
+**بعد**:
+```python
+def switch_to_worker():
+    dialog.destroy()
+    enter_worker_mode(root)
+```
+
+**السبب**: المالك ليس لديه جلسة نشطة، فلا داعي للفحص.
+
+## ================================================
+# الملف المعدل
+## ================================================
+
+### main.py:
+```python
+# خط 18 - إضافة الاستيرادات
+from state import app_mode, current_worker, current_session
+
+# خط 250-252 - تبسيط الدالة
+def switch_to_worker():
+    dialog.destroy()
+    enter_worker_mode(root)
+```
+
+## ================================================
+# الاختبار
+## ================================================
+
+✅ الاستيرادات تعمل بنجاح:
+```python
+from main import app_mode, current_worker, current_session, OWNER_PASSWORD
+print(f'app_mode: {app_mode}')  # None
+print(f'current_worker: {current_worker}')  # {}
+print(f'current_session: {current_session}')  # {}
+print(f'OWNER_PASSWORD: {OWNER_PASSWORD}')  # 1986
+```
+
+✅ الدالة `switch_to_worker` تعمل بدون أخطاء
+✅ تغيير الوضع من مالك إلى عامل يعمل الآن
+✅ تغيير الوضع من عامل إلى مالك يعمل (ينهي جلسة العامل)
+
+## ================================================
+# النتيجة
+## ================================================
+
+✅ الخطأ `NameError: name 'current_session' is not defined` تم إصلاحه
+✅ تغيير الوضع يعمل بدون أخطاء
+✅ جميع المتغيرات المطلوبة مستوردة بشكل صحيح
+
+النظام جاهز للاستخدام! 🎉

@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+pytest-cache-files-*/
+build/
+dist/
+
+# Flutter / Android
+.dart_tool/
+.flutter-plugins*
+.packages
+**/android/.gradle/
+**/android/local.properties
+**/build/
+
+# Local data and credentials
+*.db
+*.db-shm
+*.db-wal
+firebase_key.json
+device_token.txt
+*.keystore
+*.jks
+.env
+
+# Generated releases and local artifacts
+release-v*/
+*.apk
+*.exe
+*.zip
+SHA256SUMS-*.txt
+app-profile*
+app-release*
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local restore/scratch data
+_restore_points/
+backups/
+_automatic_backups/
+_firestore_snapshot_work/
+barcodes/
+Qr_codes/
+.agents/
+.devin/
+CafeRoom-update-error.log

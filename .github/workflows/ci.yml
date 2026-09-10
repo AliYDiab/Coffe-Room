@@ -1,0 +1,34 @@
+name: فحوصات CafeRoom
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  desktop-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install firebase-admin
+      - run: python -m py_compile main.py firebase_sync.py backup_manager.py modules/backups.py
+        working-directory: cafe
+      - run: python -m unittest discover -s tests -v
+        working-directory: cafe
+
+  mobile-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+        working-directory: Cafe_Android/caferoom_owner
+      - run: flutter analyze --no-fatal-infos
+        working-directory: Cafe_Android/caferoom_owner
+      - run: flutter test
+        working-directory: Cafe_Android/caferoom_owner
