@@ -762,7 +762,11 @@ def _record_label(cur, table_name, record_id):
 
 def build_change_notification(cur, rows):
     changes = []
-    notification_rows = [row for row in rows if len(row) < 5 or bool(row[4])]
+    silent_tables = {"receipts", "receipt_items"}
+    notification_rows = [
+        row for row in rows
+        if (len(row) < 5 or bool(row[4])) and row[1] not in silent_tables
+    ]
 
     for row in notification_rows:
         table_name = row[1]

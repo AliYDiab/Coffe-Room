@@ -23,8 +23,9 @@ from modules.backups import show_backups
 from backup_manager import create_backup
 from updater import check_for_updates
 from state import current_worker, current_session
+from app_config import owner_password
 
-OWNER_PASSWORD = "dodomimi"
+OWNER_PASSWORD = owner_password()
 app_mode = state.app_mode
 
 # =========================================================
@@ -486,6 +487,10 @@ def main():
     root.title("☕ Café POS")
     root.geometry("1200x700")
     root.minsize(1000, 600)
+    try:
+        root.state("zoomed")
+    except Exception:
+        pass
 
     def on_window_close():
         # Closing the app does not erase or end today's worker log.

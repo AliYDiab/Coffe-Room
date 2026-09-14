@@ -16,6 +16,15 @@
 - Windows now selects the correct EXE from releases containing both APK and EXE assets and stops safely with an error log if replacement remains locked.
 - Android releases now use a persistent CafeRoom signing certificate so v1.6.0 and later can update each other directly.
 
+## Faster desktop cashier
+
+- The cart now expands toward the left in compact columns as more distinct products are added, keeping the full practical order visible without a scrollbar.
+- Cart quantity changes update only the affected row instead of rebuilding every cart widget.
+- Product availability is cached while ordering, eliminating repeated SQLite queries on each click.
+- The desktop window opens maximized to provide the cart with the largest available workspace.
+- The default owner password is now `1986` (and can still be overridden with `CAFE_OWNER_PASSWORD`).
+- Ordinary receipt and receipt-item changes no longer generate mobile push notifications; important debt and stock alerts remain enabled.
+
 > Android installations from before v1.6.0 used a debug certificate whose private key is no longer available. Android requires a one-time uninstall before installing v1.6.0; future CafeRoom updates will install directly from the app.
 
 ## Worker and shift reporting

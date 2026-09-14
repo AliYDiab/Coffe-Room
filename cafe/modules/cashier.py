@@ -9,6 +9,7 @@ from firebase_sync import suppress_notifications_since, sync_queue_watermark
 import state
 from state import cart, current_worker, current_session
 from utils import clear, get_item_stock
+from modules.cart_layout import calculate_cart_layout, diff_cart_rows
 
 
 # =========================================================
@@ -147,6 +148,7 @@ def show_cashier(main, refresh_callback):
     selected_category = {"value": None}
     product_page = {"limit": 36}
     PRODUCT_BATCH_SIZE = 36
+    availability_cache = {}
 
     # =====================================================
     # BARCODE SCANNER
@@ -270,6 +272,8 @@ def show_cashier(main, refresh_callback):
         return True
 
     def current_available_qty(item_id):
+        if item_id in availability_cache:
+            return availability_cache[item_id]
         cur.execute("SELECT type, stock FROM items WHERE id=?", (item_id,))
         row = cur.fetchone()
         if not row:
@@ -277,7 +281,9 @@ def show_cashier(main, refresh_callback):
         item_type, stock = row
         item_type = item_type or "fixed"
         if item_type == "fixed":
-            return None if stock is None else stock
+            available = None if stock is None else stock
+            availability_cache[item_id] = available
+            return available
         cur.execute("SELECT ingredient_id, qty FROM item_ingredients WHERE item_id=?", (item_id,))
         recipe = cur.fetchall()
         if not recipe:
@@ -287,7 +293,9 @@ def show_cashier(main, refresh_callback):
             cur.execute("SELECT quantity FROM ingredients WHERE id=?", (ing_id,))
             r = cur.fetchone()
             min_available = min(min_available, (r[0] if r else 0) // needed_qty)
-        return min_available if min_available != float("inf") else 0
+        available = min_available if min_available != float("inf") else 0
+        availability_cache[item_id] = available
+        return available
 
     def load_recipe_stock_map(item_ids):
         if not item_ids:
@@ -368,6 +376,7 @@ def show_cashier(main, refresh_callback):
             stock_text = None if item_type == "fixed" and stock is None else (
                 stock if item_type == "fixed" else recipe_stock.get(item_id, 0)
             )
+            availability_cache[item_id] = stock_text
             available = stock_text is None or stock_text > 0
 
             if available:
@@ -418,95 +427,135 @@ def show_cashier(main, refresh_callback):
     # =====================================================
     # CART
     # =====================================================
+    cart_header = ctk.CTkFrame(cart_panel, height=50, fg_color="transparent")
+    cart_header.pack(fill="x", padx=8, pady=(8, 2))
+    cart_header.pack_propagate(False)
+    cart_title = ctk.CTkLabel(
+        cart_header, text="🛒 الطلب الحالي",
+        font=("Tahoma", 21, "bold")
+    )
+    cart_title.pack(expand=True)
+
+    cart_items_frame = ctk.CTkFrame(cart_panel, fg_color="transparent")
+    cart_items_frame.pack(fill="both", expand=True, padx=5, pady=2)
+
+    footer = ctk.CTkFrame(cart_panel, fg_color="transparent")
+    footer.pack(fill="x", padx=5, pady=(2, 8))
+    total_box = ctk.CTkFrame(footer, fg_color="#5a4316", corner_radius=14)
+    total_box.pack(fill="x", padx=8, pady=(0, 6))
+    ctk.CTkLabel(total_box, text="الإجمالي", font=("Tahoma", 14)).pack(side="left", padx=12, pady=9)
+    total_label = ctk.CTkLabel(total_box, text="0.00 SYP", font=("Tahoma", 22, "bold"))
+    total_label.pack(side="right", padx=12, pady=9)
+
+    btn_row = ctk.CTkFrame(footer, fg_color="transparent")
+    btn_row.pack(fill="x", padx=8)
+    ctk.CTkButton(
+        btn_row, text="💳 دفع", height=44, corner_radius=14,
+        fg_color="#f5c400", hover_color="#d9a900",
+        text_color="#15100a", font=("Tahoma", 16, "bold"),
+        command=lambda: checkout(is_debt=False)
+    ).pack(side="left", fill="x", expand=True, padx=(0, 4))
+    ctk.CTkButton(
+        btn_row, text="📋 دين", height=44, corner_radius=14,
+        fg_color="#ded38d", hover_color="#a77910",
+        text_color="#15100a", font=("Tahoma", 16, "bold"),
+        command=lambda: open_debt_checkout(sum(
+            item["price"] * item["qty"] for item in cart.values()
+        ))
+    ).pack(side="left", fill="x", expand=True, padx=(4, 0))
+
+    rendered_cart = {}
+    cart_row_widgets = {}
+    cart_refresh_job = {"id": None}
+
+    def schedule_cart_refresh():
+        if cart_refresh_job["id"] is not None:
+            return
+
+        def run_refresh():
+            cart_refresh_job["id"] = None
+            if root.winfo_exists():
+                load_cart()
+
+        cart_refresh_job["id"] = root.after_idle(run_refresh)
+
+    def create_cart_row(name):
+        card = ctk.CTkFrame(
+            cart_items_frame, height=50, fg_color="#3b2e1c", corner_radius=10
+        )
+        card.grid_propagate(False)
+        name_label = ctk.CTkLabel(
+            card, text=name, font=("Tahoma", 13, "bold"), anchor="w"
+        )
+        name_label.pack(side="left", fill="x", expand=True, padx=(8, 3))
+        subtotal_label = ctk.CTkLabel(
+            card, text="", text_color="#f5c400", font=("Tahoma", 12, "bold")
+        )
+        subtotal_label.pack(side="left", padx=3)
+
+        def decrease():
+            if name not in cart:
+                return
+            cart[name]["qty"] -= 1
+            if cart[name]["qty"] <= 0:
+                del cart[name]
+            schedule_cart_refresh()
+
+        def increase():
+            if name not in cart:
+                return
+            available = current_available_qty(cart[name]["id"])
+            if available is not None and cart[name]["qty"] + 1 > available:
+                messagebox.showwarning("تنبيه", "الكمية المتوفرة غير كافية")
+                return
+            cart[name]["qty"] += 1
+            schedule_cart_refresh()
+
+        ctk.CTkButton(card, text="-", width=30, height=30, command=decrease).pack(side="left", padx=2)
+        qty_label = ctk.CTkLabel(card, text="0", width=30, font=("Tahoma", 13, "bold"))
+        qty_label.pack(side="left")
+        ctk.CTkButton(card, text="+", width=30, height=30, command=increase).pack(side="left", padx=(2, 7))
+        cart_row_widgets[name] = {
+            "card": card,
+            "name": name_label,
+            "subtotal": subtotal_label,
+            "qty": qty_label,
+        }
+
     def load_cart():
-        for w in cart_panel.winfo_children():
-            w.destroy()
+        changes = diff_cart_rows(rendered_cart, cart)
+        for name in changes.removed:
+            widgets = cart_row_widgets.pop(name, None)
+            if widgets:
+                widgets["card"].destroy()
+        for name in changes.added:
+            create_cart_row(name)
+        for name in changes.added + changes.updated:
+            item = cart[name]
+            widgets = cart_row_widgets[name]
+            widgets["qty"].configure(text=str(item["qty"]))
+            widgets["subtotal"].configure(
+                text=f"{item['price'] * item['qty']:.0f} SYP"
+            )
 
-        cart_items_frame = ctk.CTkScrollableFrame(cart_panel, fg_color="transparent")
-        cart_items_frame.pack(fill="both", expand=True, padx=5, pady=(5, 0))
+        body.update_idletasks()
+        body_width = max(400, body.winfo_width() - sidebar.winfo_width() - 30)
+        layout = calculate_cart_layout(len(cart), body_width, body.winfo_height())
+        cart_panel.configure(width=layout.width)
+        for column in range(layout.columns):
+            cart_items_frame.grid_columnconfigure(column, weight=1, minsize=layout.card_width)
+        for index, name in enumerate(cart):
+            row = index % layout.rows
+            column = index // layout.rows
+            cart_row_widgets[name]["card"].grid(
+                row=row, column=column, sticky="nsew", padx=3, pady=3
+            )
 
-        ctk.CTkLabel(
-            cart_items_frame, text="🛒 الطلب الحالي",
-            font=("Tahoma", 26, "bold")
-        ).pack(pady=20)
-
-        total = 0
-        for name, item in cart.items():
-            subtotal = item["price"] * item["qty"]
-            total += subtotal
-
-            card = ctk.CTkFrame(cart_items_frame, fg_color="#3b2e1c", corner_radius=15)
-            card.pack(fill="x", padx=10, pady=8)
-
-            top_row = ctk.CTkFrame(card, fg_color="transparent")
-            top_row.pack(fill="x", padx=10, pady=(10, 5))
-            ctk.CTkLabel(
-                top_row,
-                text=name,
-                font=("Tahoma", 17, "bold"),
-                anchor="w",
-                justify="left",
-                wraplength=230
-            ).pack(fill="x", anchor="w")
-            ctk.CTkLabel(
-                top_row,
-                text=f"{subtotal:.2f} SYP",
-                text_color="#f5c400",
-                font=("Tahoma", 16, "bold")
-            ).pack(anchor="e", pady=(4, 0))
-
-            controls = ctk.CTkFrame(card, fg_color="transparent")
-            controls.pack(fill="x", padx=10, pady=(0, 10))
-
-            def increase(n=name):
-                avail = current_available_qty(cart[n]["id"])
-                if avail is not None and cart[n]["qty"] + 1 > avail:
-                    messagebox.showwarning("تنبيه", "الكمية المتوفرة غير كافية")
-                    return
-                cart[n]["qty"] += 1
-                root.after(10, load_cart)
-
-            def decrease(n=name):
-                cart[n]["qty"] -= 1
-                if cart[n]["qty"] <= 0:
-                    del cart[n]
-                root.after(10, load_cart)
-
-            ctk.CTkButton(controls, text="-", width=40, command=decrease).pack(side="left")
-            ctk.CTkLabel(controls, text=str(item["qty"]), width=50,
-                         font=("Tahoma", 16, "bold")).pack(side="left")
-            ctk.CTkButton(controls, text="+", width=40, command=increase).pack(side="left")
-
-        footer = ctk.CTkFrame(cart_panel, fg_color="transparent")
-        footer.pack(fill="x", padx=5, pady=(5, 10))
-
-        total_box = ctk.CTkFrame(footer, fg_color="#5a4316", corner_radius=20)
-        total_box.pack(fill="x", padx=10, pady=(0, 10))
-        ctk.CTkLabel(total_box, text="الإجمالي", font=("Tahoma", 18)).pack(pady=(15, 5))
-        ctk.CTkLabel(total_box, text=f"{total:.2f} SYP",
-                     font=("Tahoma", 34, "bold")).pack(pady=(0, 15))
-
-        # ── two checkout buttons ──
-        btn_row = ctk.CTkFrame(footer, fg_color="transparent")
-        btn_row.pack(fill="x", padx=15, pady=0)
-
-        ctk.CTkButton(
-            btn_row, text="💳 دفع",
-            height=55, corner_radius=18,
-            fg_color="#f5c400", hover_color="#d9a900",
-            text_color="#15100a",
-            font=("Tahoma", 18, "bold"),
-            command=lambda: checkout(is_debt=False)
-        ).pack(side="left", fill="x", expand=True, padx=(0, 5))
-
-        ctk.CTkButton(
-            btn_row, text="📋 دين",
-            height=55, corner_radius=18,
-            fg_color="#ded38d", hover_color="#a77910",
-            text_color="#15100a",
-            font=("Tahoma", 18, "bold"),
-            command=lambda: open_debt_checkout(total)
-        ).pack(side="left", fill="x", expand=True, padx=(5, 0))
+        total = sum(item["price"] * item["qty"] for item in cart.values())
+        total_label.configure(text=f"{total:.2f} SYP")
+        cart_title.configure(text=f"🛒 الطلب الحالي ({len(cart)})")
+        rendered_cart.clear()
+        rendered_cart.update({name: dict(item) for name, item in cart.items()})
 
     # =====================================================
     # DEBT CHECKOUT POPUP
@@ -649,7 +698,7 @@ def show_cashier(main, refresh_callback):
             }
 
         cart[name]["qty"] += 1
-        root.after(10, load_cart)
+        schedule_cart_refresh()
 
     # =====================================================
     # CHECKOUT
@@ -798,6 +847,7 @@ def show_cashier(main, refresh_callback):
         cart.clear()
 
         product_page["limit"] = PRODUCT_BATCH_SIZE
+        availability_cache.clear()
         load_items(selected_category["value"])
         load_cart()
 
@@ -850,7 +900,8 @@ def show_cashier(main, refresh_callback):
     search_var.trace_add("write", schedule_search)
 
     load_items(reset_limit=True)
-    root.after(10, load_cart)
+    body.bind("<Configure>", lambda event: schedule_cart_refresh())
+    schedule_cart_refresh()
 
 
 # =====================================================

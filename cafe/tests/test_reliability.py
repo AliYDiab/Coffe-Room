@@ -115,6 +115,27 @@ class ReliabilityTests(unittest.TestCase):
         self.assertIn("Added debts #4", notification[1])
         self.assertNotIn("receipts", notification[1])
 
+    def test_receipt_rows_never_generate_generic_mobile_notifications(self):
+        rows = [
+            (1, "receipts", 51, "insert", 1),
+            (2, "receipt_items", 52, "insert", 1),
+        ]
+
+        self.assertIsNone(build_change_notification(self.conn.cursor(), rows))
+
+    def test_receipt_rows_are_ignored_when_an_important_change_is_present(self):
+        rows = [
+            (1, "receipts", 51, "insert", 1),
+            (2, "receipt_items", 52, "insert", 1),
+            (3, "debts", 7, "insert", 1),
+        ]
+
+        notification = build_change_notification(self.conn.cursor(), rows)
+
+        self.assertIsNotNone(notification)
+        self.assertIn("Added debts #7", notification[1])
+        self.assertNotIn("receipt", notification[1])
+
 
 if __name__ == "__main__":
     unittest.main()
