@@ -10,6 +10,11 @@ import state
 from state import cart, current_worker, current_session
 from utils import clear, get_item_stock
 from modules.cart_layout import calculate_cart_layout, diff_cart_rows
+from modules.cashier_ui import cashier_content_mode
+from modules.barcode_scanner import (
+    install_global_key_handlers,
+    remove_scanned_text_from_focused_input,
+)
 
 
 # =========================================================
@@ -97,10 +102,7 @@ def show_cashier(main, refresh_callback):
 
             ctk.CTkLabel(
                 work_info,
-                text=(
-                    f"عناصر اليوم: {worker_totals['items']:g} | "
-                    f"الدخل: {worker_totals['revenue']:,.0f} SYP"
-                ),
+                text=f"عناصر اليوم: {worker_totals['items']:g}",
                 font=("Tahoma", 12, "bold"),
                 text_color="#f5c400"
             ).pack(anchor="e")
@@ -115,15 +117,6 @@ def show_cashier(main, refresh_callback):
     # =====================================================
     body = ctk.CTkFrame(root, fg_color="transparent")
     body.pack(fill="both", expand=True)
-
-    sidebar = ctk.CTkScrollableFrame(body, width=220, fg_color="#2f2517")
-    sidebar.pack(side="left", fill="y", padx=10, pady=10)
-
-    ctk.CTkLabel(
-        sidebar,
-        text="📂 الفئات",
-        font=("Tahoma", 24, "bold")
-    ).pack(pady=20)
 
     center = ctk.CTkScrollableFrame(body, fg_color="#241c11")
     center.pack(side="left", fill="both", expand=True, padx=10, pady=10)
@@ -158,19 +151,6 @@ def show_cashier(main, refresh_callback):
     MIN_SCAN_LENGTH = 4
     MAX_SCAN_DURATION_MS = 1200
     MAX_KEY_GAP_MS = 120
-    TEXT_WIDGET_CLASSES = {"Entry", "Text", "TEntry", "Spinbox"}
-
-    def remove_scanned_text_from_focused_input(code):
-        try:
-            focused = root.winfo_toplevel().focus_get()
-            if focused is None or focused.winfo_class() not in TEXT_WIDGET_CLASSES:
-                return
-            value = focused.get()
-            if value.endswith(code):
-                focused.delete(len(value) - len(code), "end")
-        except Exception:
-            pass
-
     def flush_scan():
         if scan_buffer["timer"] is not None:
             try:
@@ -195,7 +175,7 @@ def show_cashier(main, refresh_callback):
         """, (code,))
         item = cur.fetchone()
         if item:
-            remove_scanned_text_from_focused_input(code)
+            remove_scanned_text_from_focused_input(root, code)
             add_to_cart(item)
             try:
                 import winsound
@@ -229,10 +209,8 @@ def show_cashier(main, refresh_callback):
         scan_buffer["timer"] = root.after(SCAN_TIMEOUT_MS, flush_scan)
 
     try:
-        tk_root = root.winfo_toplevel()
-        tk_root.bind("<Key>", on_scan_key)
+        install_global_key_handlers(root, on_scan_key)
     except Exception:
-        # إذا فشل ربط الحدث، تجاهله (المسح الضوئي قد لا يعمل في هذا الوضع)
         print("Warning: Could not bind keyboard events for barcode scanning")
 
     def on_search_focus_in(event):
@@ -328,6 +306,10 @@ def show_cashier(main, refresh_callback):
             widget.destroy()
 
         search = search_var.get().strip()
+        if cashier_content_mode(search) == "receipts":
+            load_recent_receipts()
+            return
+
         where = []
         params = []
         if category:
@@ -423,6 +405,50 @@ def show_cashier(main, refresh_callback):
                     load_items(selected_category["value"])
                 )
             ).pack(fill="x", padx=15, pady=12)
+
+    def load_recent_receipts():
+        """Render receipts in the default cashier area until a product is searched."""
+        ctk.CTkLabel(
+            content_frame,
+            text="🧾 أحدث الفواتير",
+            font=("Tahoma", 22, "bold"),
+        ).pack(anchor="e", padx=15, pady=(15, 8))
+
+        cur.execute("""
+            SELECT id, date, total
+            FROM receipts
+            ORDER BY date DESC
+            LIMIT 30
+        """)
+        receipts = cur.fetchall()
+        if not receipts:
+            ctk.CTkLabel(
+                content_frame,
+                text="لا توجد فواتير بعد. ابحث عن منتج لبدء طلب جديد.",
+                text_color="#e8dcc0",
+                font=("Tahoma", 16),
+            ).pack(pady=40)
+            return
+
+        for receipt_id, receipt_date, receipt_total in receipts:
+            try:
+                time_label = datetime.fromisoformat(receipt_date).strftime("%Y-%m-%d  %H:%M")
+            except (TypeError, ValueError):
+                time_label = receipt_date or ""
+            row = ctk.CTkFrame(content_frame, fg_color="#2f2517", corner_radius=10)
+            row.pack(fill="x", padx=15, pady=4)
+            ctk.CTkLabel(
+                row,
+                text=f"فاتورة #{receipt_id}",
+                font=("Tahoma", 15, "bold"),
+            ).pack(side="right", padx=12, pady=10)
+            ctk.CTkLabel(row, text=time_label, text_color="#e8dcc0").pack(side="right", padx=12)
+            ctk.CTkLabel(
+                row,
+                text=f"{(receipt_total or 0):.2f} SYP",
+                text_color="#f5c400",
+                font=("Tahoma", 14, "bold"),
+            ).pack(side="left", padx=12)
 
     # =====================================================
     # CART
@@ -867,25 +893,9 @@ def show_cashier(main, refresh_callback):
         return "break"
 
     try:
-        root.winfo_toplevel().bind("<Return>", checkout_on_enter)
-        root.winfo_toplevel().bind("<KP_Enter>", checkout_on_enter)
+        install_global_key_handlers(root, None, checkout_on_enter)
     except Exception:
         print("Warning: Could not bind Enter key for checkout")
-
-    # =====================================================
-    # CATEGORY BUTTONS
-    # =====================================================
-    ctk.CTkButton(
-        sidebar, text="🌍 الكل", height=50, corner_radius=15,
-        font=("Tahoma", 16, "bold"), command=lambda: load_items(reset_limit=True)
-    ).pack(fill="x", padx=10, pady=5)
-
-    cur.execute("SELECT name FROM categories")
-    for cat in [c[0] for c in cur.fetchall()]:
-        ctk.CTkButton(
-            sidebar, text=cat, height=50, corner_radius=15,
-            font=("Tahoma", 16), command=lambda c=cat: load_items(c, reset_limit=True)
-        ).pack(fill="x", padx=10, pady=5)
 
     search_timer = {"id": None}
 

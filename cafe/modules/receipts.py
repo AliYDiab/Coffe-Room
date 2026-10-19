@@ -2,6 +2,10 @@ import customtkinter as ctk
 from tkinter import messagebox
 from adb import cur, conn
 from utils import clear
+from modules.barcode_scanner import (
+    install_global_key_handlers,
+    remove_scanned_text_from_focused_input,
+)
 from datetime import datetime, date
 import calendar
 import time
@@ -392,15 +396,6 @@ def show_receipts(main, owner_mode=False):
     MIN_SCAN_LENGTH = 4
     MAX_SCAN_DURATION_MS = 1200
     MAX_KEY_GAP_MS = 120
-    TEXT_WIDGET_CLASSES = {"Entry", "Text", "TEntry", "Spinbox"}
-
-    def focused_text_input():
-        try:
-            focused = root.winfo_toplevel().focus_get()
-            return focused is not None and focused.winfo_class() in TEXT_WIDGET_CLASSES
-        except Exception:
-            return False
-
     def resolve_scanned_item(code):
         scanned_code = code.strip()
         if scanned_code.upper().startswith("ITEM_ID:"):
@@ -450,6 +445,7 @@ def show_receipts(main, owner_mode=False):
             return
 
         item_id, item_name = item
+        remove_scanned_text_from_focused_input(root, code)
         show_item_receipts(item_name, item_id)
         try:
             import winsound
@@ -458,7 +454,7 @@ def show_receipts(main, owner_mode=False):
             pass
 
     def on_scan_key(event):
-        if not root.winfo_exists() or focused_text_input():
+        if not root.winfo_exists():
             return
         if not event.char or not event.char.isprintable():
             return
@@ -481,17 +477,14 @@ def show_receipts(main, owner_mode=False):
         scan_buffer["timer"] = root.after(SCAN_TIMEOUT_MS, flush_scan)
 
     def finish_scan_on_enter(event=None):
-        if not root.winfo_exists() or focused_text_input():
+        if not root.winfo_exists():
             return
         if scan_buffer["chars"].strip():
             flush_scan()
             return "break"
 
     try:
-        tk_root = root.winfo_toplevel()
-        tk_root.bind("<Key>", on_scan_key)
-        tk_root.bind("<Return>", finish_scan_on_enter)
-        tk_root.bind("<KP_Enter>", finish_scan_on_enter)
+        install_global_key_handlers(root, on_scan_key, finish_scan_on_enter)
     except Exception:
         print("Warning: Could not bind keyboard events for receipt item scanning")
 

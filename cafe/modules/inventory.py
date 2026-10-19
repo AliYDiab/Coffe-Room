@@ -11,6 +11,10 @@ from threading import Thread
 import state
 from state import current_worker
 from firebase_sync import init_firebase, push_all_database_to_firestore, send_notification
+from modules.barcode_scanner import (
+    install_global_key_handlers,
+    remove_scanned_text_from_focused_input,
+)
 
 # Handle barcode import gracefully for PyInstaller compatibility
 try:
@@ -700,18 +704,6 @@ def show_inventory(main, refresh_callback, owner_mode=False):
 
     scan_buffer = {"chars": "", "timer": None}
     SCAN_TIMEOUT_MS = 80
-    TEXT_WIDGET_CLASSES = {"Entry", "Text", "TEntry", "Spinbox"}
-
-    def focused_text_input():
-        try:
-            focused = root.winfo_toplevel().focus_get()
-            return focused is not None and (
-                focused == search_entry._entry
-                or focused.winfo_class() in TEXT_WIDGET_CLASSES
-            )
-        except Exception:
-            return False
-
     def flush_scan():
         if scan_buffer["timer"] is not None:
             try:
@@ -726,6 +718,7 @@ def show_inventory(main, refresh_callback, owner_mode=False):
         cur.execute("SELECT id FROM items WHERE barcode_value=?", (code,))
         row = cur.fetchone()
         if row:
+            remove_scanned_text_from_focused_input(root, code)
             open_restock_panel(main, refresh_callback, owner_mode, row[0])
             try:
                 import winsound
@@ -736,7 +729,7 @@ def show_inventory(main, refresh_callback, owner_mode=False):
             print("Inventory barcode not found:", code)
 
     def on_scan_key(event):
-        if not root.winfo_exists() or focused_text_input():
+        if not root.winfo_exists():
             return
         if not event.char or not event.char.isprintable():
             return
@@ -746,16 +739,14 @@ def show_inventory(main, refresh_callback, owner_mode=False):
         scan_buffer["timer"] = root.after(SCAN_TIMEOUT_MS, flush_scan)
 
     def finish_scan_on_enter(event=None):
-        if not root.winfo_exists() or focused_text_input():
+        if not root.winfo_exists():
             return
         if scan_buffer["chars"].strip():
             flush_scan()
             return "break"
 
     try:
-        root.winfo_toplevel().bind("<Key>", on_scan_key)
-        root.winfo_toplevel().bind("<Return>", finish_scan_on_enter)
-        root.winfo_toplevel().bind("<KP_Enter>", finish_scan_on_enter)
+        install_global_key_handlers(root, on_scan_key, finish_scan_on_enter)
     except Exception:
         print("Warning: Could not bind keyboard events for inventory barcode scanning")
     ctk.CTkButton(
