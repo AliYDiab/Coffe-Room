@@ -1,7 +1,7 @@
 """Window-level keyboard bindings used by barcode-enabled screens."""
 
 
-def install_global_key_handlers(page, on_key, on_enter=None):
+def install_global_key_handlers(page, on_key, on_enter=None, on_paste=None):
     """Bind scanner keys for a page without replacing other window handlers.
 
     The bindings are removed when the page is destroyed, preventing callbacks
@@ -13,6 +13,8 @@ def install_global_key_handlers(page, on_key, on_enter=None):
         bindings.append(("<Key>", on_key))
     if on_enter is not None:
         bindings.extend((("<Return>", on_enter), ("<KP_Enter>", on_enter)))
+    if on_paste is not None:
+        bindings.append(("<<Paste>>", on_paste))
 
     binding_ids = [
         (sequence, window.bind(sequence, callback, add="+"))

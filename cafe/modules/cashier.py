@@ -151,6 +151,17 @@ def show_cashier(main, refresh_callback):
     MIN_SCAN_LENGTH = 4
     MAX_SCAN_DURATION_MS = 1200
     MAX_KEY_GAP_MS = 120
+    
+    # Focus the search bar automatically on startup to enable barcode scanning
+    def focus_search_bar():
+        try:
+            search_entry.focus_set()
+        except Exception as e:
+            print(f"Could not focus search bar: {e}")
+    
+    # Run this after a short delay to ensure UI is ready
+    root.after(100, focus_search_bar)
+
     def flush_scan():
         if scan_buffer["timer"] is not None:
             try:
@@ -188,6 +199,8 @@ def show_cashier(main, refresh_callback):
     def on_scan_key(event):
         if not root.winfo_exists():
             return
+        if root.winfo_toplevel().focus_get() == search_entry._entry:
+            return
         
         if not event.char or not event.char.isprintable():
             return
@@ -208,8 +221,24 @@ def show_cashier(main, refresh_callback):
             root.after_cancel(scan_buffer["timer"])
         scan_buffer["timer"] = root.after(SCAN_TIMEOUT_MS, flush_scan)
 
+    def on_scan_paste(event):
+        if not root.winfo_exists() or root.winfo_toplevel().focus_get() == search_entry._entry:
+            return
+        try:
+            code = root.clipboard_get().strip()
+        except Exception:
+            return
+        if not code:
+            return
+        if scan_buffer["timer"] is not None:
+            root.after_cancel(scan_buffer["timer"])
+        now = time.monotonic()
+        scan_buffer.update(chars=code, timer=None, started=now, last=now)
+        flush_scan()
+        return "break"
+
     try:
-        install_global_key_handlers(root, on_scan_key)
+        install_global_key_handlers(root, on_scan_key, on_paste=on_scan_paste)
     except Exception:
         print("Warning: Could not bind keyboard events for barcode scanning")
 
@@ -315,9 +344,9 @@ def show_cashier(main, refresh_callback):
         if category:
             where.append("i.category = ?")
             params.append(category)
-        if search:
+        for word in search.split():
             where.append("i.name LIKE ?")
-            params.append(f"%{search}%")
+            params.append(f"%{word}%")
 
         where_sql = f"WHERE {' AND '.join(where)}" if where else ""
         cur.execute(f"SELECT COUNT(*) FROM items i {where_sql}", params)
@@ -881,6 +910,8 @@ def show_cashier(main, refresh_callback):
         try:
             if not root.winfo_exists():
                 return
+            if root.winfo_toplevel().focus_get() == search_entry._entry:
+                return "break"
             if scan_buffer["chars"].strip():
                 flush_scan()
                 return "break"

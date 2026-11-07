@@ -8,7 +8,6 @@ a = Analysis(
     binaries=[],
     datas=[
         ('firebase_key.json', '.'),
-        ('cafe.db', '.'),
         ('CoffeRoom.ico', '.'),
         ('coffee_theme.json', '.'),
         ('state.py', '.'),

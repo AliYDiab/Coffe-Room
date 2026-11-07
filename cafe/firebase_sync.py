@@ -29,6 +29,8 @@ def get_base_dir():
 BASE_DIR      = get_base_dir()
 DB_PATH       = os.path.join(BASE_DIR, "cafe.db")
 KEY_PATH      = os.path.join(BASE_DIR, "firebase_key.json")
+if not os.path.exists(KEY_PATH) and getattr(sys, "frozen", False):
+    KEY_PATH = os.path.join(sys._MEIPASS, "firebase_key.json")
 TOKEN_PATH    = os.path.join(BASE_DIR, "device_token.txt")
 SYNC_INTERVAL = 30   # seconds between each sync
 SCHEMA_VERSION = 2
