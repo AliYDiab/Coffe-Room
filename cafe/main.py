@@ -39,6 +39,8 @@ except Exception as exc:
 
 ctk.set_appearance_mode("dark")
 theme_base = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, "frozen", False) and not os.path.exists(os.path.join(theme_base, "coffee_theme.json")):
+    theme_base = sys._MEIPASS
 ctk.set_default_color_theme(os.path.join(theme_base, "coffee_theme.json"))
 
 
@@ -466,7 +468,7 @@ def main_with_mode(root):
         show_cashier(main_frame, refresh)
 
     nav_button("كاشير", lambda: show_cashier(main_frame, refresh), requires_password=False)
-    nav_button("فواتير", lambda: show_receipts(main_frame, app_mode == "owner"), requires_password=False)
+    nav_button("فواتير", lambda: show_receipts(main_frame, True), requires_password=True)
     nav_button("بيانات", lambda: show_analytics(main_frame), requires_password=True)
     nav_button("المخزن", lambda: show_inventory(main_frame, refresh, app_mode == "owner"), requires_password=False)
     nav_button("مكونات", lambda: show_ingredients(main_frame), requires_password=False)
