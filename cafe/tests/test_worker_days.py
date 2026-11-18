@@ -106,6 +106,17 @@ class DailyWorkerLogTests(unittest.TestCase):
         old_status = adb.cur.execute("SELECT status FROM worker_sessions WHERE id = ?", (first_id,)).fetchone()[0]
         self.assertEqual(old_status, "completed")
 
+    def test_stale_sessions_close_at_the_next_business_day_boundary(self):
+        session_id, _, _ = adb.start_worker_session(1, datetime(2026, 8, 19, 8, 0))
+
+        adb.close_stale_worker_sessions(datetime(2026, 8, 20, 5, 0))
+
+        end_time, status = adb.cur.execute(
+            "SELECT end_time, status FROM worker_sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        self.assertEqual(end_time, "2026-08-20T05:00:00")
+        self.assertEqual(status, "completed")
+
     def test_debt_is_held_until_full_payment(self):
         session_id, _, _ = adb.start_worker_session(1, datetime(2026, 8, 19, 8, 0))
         receipt_id = self.add_receipt(session_id, 1, 100, status="debt")
