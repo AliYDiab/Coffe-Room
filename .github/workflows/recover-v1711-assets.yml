@@ -1,0 +1,35 @@
+name: Recover v1.7.11 release transfers
+on:
+  push:
+    branches: ['transport/v1.7.11']
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Reassemble and verify release assets
+        run: |
+          set -euo pipefail
+          mkdir -p baseline release
+          gh release download v1.7.10 --pattern CafeRoom-PC-v1.7.10.exe --dir baseline
+          gh run download 44344022323 --name android-release-candidate --dir baseline
+          gh release download v1.7.11 --pattern '*.bsdiff' --pattern SHA256SUMS-v1.7.11.txt --dir release
+          echo '313bf0034c93173bb9a9e4681bc8def94a4cc45dbecb23beb98e032130eb9cde  baseline/CafeRoom-PC-v1.7.10.exe' | sha256sum -c -
+          python -m pip install bsdiff4==1.4.3
+          python -c "from bsdiff4 import file_patch; file_patch('baseline/CafeRoom-PC-v1.7.10.exe', 'release/CafeRoom-PC-v1.7.11.exe', 'release/windows-v1711.bsdiff'); file_patch('baseline/app-release.apk', 'release/CafeRoom-Mobile-v1.7.11.apk', 'release/android-v1711.bsdiff')"
+          cd release
+          sha256sum -c SHA256SUMS-v1.7.11.txt
+          gh release upload v1.7.11 CafeRoom-PC-v1.7.11.exe CafeRoom-Mobile-v1.7.11.apk
+          gh release delete-asset v1.7.11 windows-v1711.bsdiff --yes
+          gh release delete-asset v1.7.11 android-v1711.bsdiff --yes
