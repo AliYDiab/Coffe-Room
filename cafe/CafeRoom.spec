@@ -7,7 +7,6 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('firebase_key.json', '.'),
         ('CoffeRoom.ico', '.'),
         ('coffee_theme.json', '.'),
         ('state.py', '.'),

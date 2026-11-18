@@ -1,7 +1,21 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 conn = sqlite3.connect("cafe.db", check_same_thread=False)
+
+
+def get_business_date(dt=None):
+    """
+    Get the business date for a given datetime.
+    Business day starts at 05:00 (5 AM).
+    Before 05:00 -> previous calendar day
+    At or after 05:00 -> current calendar day
+    """
+    dt = dt or datetime.now()
+    if dt.hour < 5:
+        # Before 5 AM, belongs to previous business day
+        return (dt - timedelta(days=1)).date().isoformat()
+    return dt.date().isoformat()
 cur = conn.cursor()
 cur.execute("PRAGMA journal_mode=WAL")
 cur.execute("PRAGMA synchronous=NORMAL")
@@ -285,7 +299,7 @@ def get_worker_session_totals(session_id):
 def close_stale_worker_sessions(now=None):
     """Complete active logs from older days; their history is never deleted."""
     now = now or datetime.now()
-    today = now.date().isoformat()
+    today = get_business_date(now)
     cur.execute("""
         SELECT id, work_date
         FROM worker_sessions
@@ -300,7 +314,8 @@ def close_stale_worker_sessions(now=None):
                 total_items = ?, total_revenue = ?, held_revenue = ?, updated_at = ?
             WHERE id = ?
         """, (
-            f"{work_date}T23:59:59", totals["receipts"], totals["items"],
+            f"{(datetime.fromisoformat(work_date) + timedelta(days=1)).date().isoformat()}T05:00:00",
+            totals["receipts"], totals["items"],
             totals["revenue"], totals["held_revenue"], now.isoformat(), session_id,
         ))
     conn.commit()
@@ -308,10 +323,10 @@ def close_stale_worker_sessions(now=None):
 
 
 def start_worker_session(worker_id, now=None):
-    """Start or resume this worker's single log for the current calendar day."""
+    """Start or resume this worker's single log for the current business day (starts at 05:00)."""
     now = now or datetime.now()
     close_stale_worker_sessions(now)
-    work_date = now.date().isoformat()
+    work_date = get_business_date(now)
     cur.execute("""
         SELECT id, start_time
         FROM worker_sessions
@@ -338,7 +353,7 @@ def start_worker_session(worker_id, now=None):
     return cur.lastrowid, now.isoformat(), work_date
 
 
-def end_worker_session(session_id, now=None):
+def end_worker_session(session_id, now=None, export_dir=None):
     """Close today's worker log and persist its final totals."""
     now = now or datetime.now()
     totals = _worker_session_totals(session_id)
@@ -346,13 +361,23 @@ def end_worker_session(session_id, now=None):
         UPDATE worker_sessions
         SET end_time = ?, status = 'completed', total_receipts = ?,
             total_items = ?, total_revenue = ?, held_revenue = ?, updated_at = ?
-        WHERE id = ?
+        WHERE id = ? AND status = 'active'
     """, (
         now.isoformat(), totals["receipts"], totals["items"], totals["revenue"],
         totals["held_revenue"], now.isoformat(), session_id,
     ))
-    conn.commit()
-    return cur.rowcount > 0
+    closed = cur.rowcount > 0
+    try:
+        if closed and export_dir is not None:
+            from modules.shift_reports import close_report
+            path = close_report(conn, session_id, now.isoformat(), export_dir)
+        else:
+            path = None
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return path if export_dir is not None else closed
 
 
 def get_worker_logs(limit=200):
@@ -688,7 +713,7 @@ def start_shift_session(schedule_id, worker_id):
         attach_worker_to_shift(session_id, worker_id)
         return session_id
 
-    date_str = datetime.now().date().isoformat()
+    date_str = get_business_date()
     current_time = datetime.now().isoformat()
 
     cur.execute("""

@@ -1,7 +1,7 @@
 """Resolve supplier barcodes and the codes printed by CafeRoom."""
 
 
-def resolve_scanned_item(cursor, code):
+def resolve_scanned_item(cursor, code, *, allow_bare_id=True):
     code = code.strip()
     fields = "id, name, price, stock, 0, type, cost"
     cursor.execute(f"SELECT {fields} FROM items WHERE barcode_value = ?", (code,))
@@ -15,7 +15,7 @@ def resolve_scanned_item(cursor, code):
     elif code.startswith("ITEM:"):
         cursor.execute(f"SELECT {fields} FROM items WHERE name = ?", (code[5:],))
         return cursor.fetchone()
-    elif not code.isdecimal():
+    elif not allow_bare_id or not code.isdecimal():
         return None
     cursor.execute(f"SELECT {fields} FROM items WHERE id = ?", (code,))
     return cursor.fetchone()

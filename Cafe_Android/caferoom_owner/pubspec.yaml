@@ -2,7 +2,7 @@ name: caferoom_owner
 description: CafeRoom Owner Dashboard
  
 publish_to: 'none'
-version: 1.6.0+6
+version: 1.7.11+11
  
 environment:
   sdk: '>=3.0.0 <4.0.0'

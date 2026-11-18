@@ -881,6 +881,27 @@ def initial_full_sync(conn, db, prev_state):
     sync_expenses(conn, db)
 
 
+def sync_closed_shift_reports(conn, db):
+    from modules.shift_reports import pending_reports
+
+    for key, report in pending_reports(conn):
+        sections = report.pop("sections")
+        references = {}
+        collection = db.collection("cafe")
+        for section, rows in sections.items():
+            references[section] = []
+            for offset in range(0, len(rows), 50):
+                name = f"shift_report_rows_{key}_{section}_{offset}"
+                collection.document(name).set({"rows": [dict(values=row) for row in rows[offset:offset + 50]]})
+                references[section].append(name)
+        collection.document(f"shift_report_{key}").set({
+            **report, "entity": "closed_shift_report", "sections": references,
+        })
+        conn.execute("UPDATE shift_report_outbox SET sent=1 WHERE id=?", (key,))
+        conn.commit()
+        send_notification("تقرير وردية جديد", f"تقرير {report['worker']} جاهز في قسم تقارير الورديات", db=db)
+
+
 def push_all_database_to_firestore():
     """Run a manual full upload of the local SQLite data to Firestore."""
     if not firebase_admin._apps and not os.path.exists(KEY_PATH):
@@ -1709,6 +1730,7 @@ def main():
 
     prev_state = {}
     bootstrap_done = False
+    next_report_sync = 0
 
     if not bootstrap_done:
         try:
@@ -1723,6 +1745,9 @@ def main():
         try:
             did_work = False
             now = time.time()
+            if now >= next_report_sync:
+                next_report_sync = now + SYNC_INTERVAL
+                sync_closed_shift_reports(conn, db)
 
             if "next_mobile_poll_at" not in prev_state or now >= prev_state["next_mobile_poll_at"]:
                 did_work |= bool(import_mobile_inventory_requests(conn, db))

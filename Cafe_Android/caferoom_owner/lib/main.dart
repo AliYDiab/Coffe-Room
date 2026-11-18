@@ -22,6 +22,7 @@ import 'screens/customer_insights_screen.dart';
 import 'screens/flexible_firestore_screen.dart';
 import 'screens/mobile_entry_screen.dart';
 import 'screens/request_history_screen.dart';
+import 'screens/closed_shift_reports_screen.dart';
 
 // Global flag to track Firebase availability
 bool firebaseAvailable = false;
@@ -402,7 +403,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   final UpdateInstallCoordinator _updateInstallCoordinator =
       UpdateInstallCoordinator();
 
-  final _screens = const [
+  final _screens = [
     DashboardScreen(),
     InventoryScreen(),
     ReceiptsScreen(),
@@ -415,6 +416,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     FlexibleFirestoreScreen(),
     MobileEntryScreen(),
     RequestHistoryScreen(),
+    firebaseAvailable
+        ? const ClosedShiftReportsScreen()
+        : const Center(child: Text('تقارير الورديات تحتاج إلى اتصال')),
   ];
 
   final _labels = const [
@@ -430,6 +434,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     'Data',
     'Entry',
     'حالة الطلبات',
+    'تقارير الورديات',
   ];
 
   final _icons = const [
@@ -445,6 +450,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     Icons.device_hub_rounded,
     Icons.add_circle_outline_rounded,
     Icons.sync_alt_rounded,
+    Icons.picture_as_pdf_outlined,
   ];
 
   @override
@@ -698,7 +704,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           ],
         ),
         actions: [
-          PdfReportButton(screenIndex: _idx),
+          if (_idx != _screens.length - 1) PdfReportButton(screenIndex: _idx),
           if (firebaseAvailable)
             IconButton(
               onPressed: () => FirebaseAuth.instance.signOut(),

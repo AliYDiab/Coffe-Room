@@ -1,0 +1,43 @@
+name: Build Android release candidate
+
+on:
+  push:
+    branches: ['release/v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.8'
+          channel: stable
+          cache: true
+      - name: Set up disposable signing for the build
+        shell: bash
+        run: |
+          keytool -genkeypair -keystore "$RUNNER_TEMP/build.jks" -storetype JKS \
+            -alias build -storepass temporary-build-key -keypass temporary-build-key \
+            -keyalg RSA -keysize 2048 -validity 7 -dname "CN=Temporary CafeRoom Build"
+          printf 'storeFile=%s/build.jks\nstorePassword=temporary-build-key\nkeyAlias=build\nkeyPassword=temporary-build-key\n' "$RUNNER_TEMP" > "$RUNNER_TEMP/build.properties"
+          echo "CAFEROOM_SIGNING_PROPERTIES=$RUNNER_TEMP/build.properties" >> "$GITHUB_ENV"
+      - name: Build candidate APK
+        working-directory: Cafe_Android/caferoom_owner
+        run: |
+          flutter pub get
+          flutter build apk --release --no-pub
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-release-candidate
+          path: Cafe_Android/caferoom_owner/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error

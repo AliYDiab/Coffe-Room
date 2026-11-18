@@ -4,6 +4,8 @@ from datetime import datetime
 from threading import Thread
 
 import tkinter as tk
+from tkinter import messagebox
+from pathlib import Path
 import customtkinter as ctk
 
 import state
@@ -326,25 +328,9 @@ def main_with_mode(root):
     # WORKER INFO + TIMER
     # ==========================================
     timer_label = None
-    work_category_label = None
-
-    def current_worker_drinks_sold():
-        worker_session_id = current_session.get("id") if current_session else None
-        if not worker_session_id:
-            return 0
-        cur.execute("""
-            SELECT COALESCE(SUM(ri.qty), 0)
-            FROM receipt_items ri
-            JOIN receipts r ON r.id = ri.receipt_id
-            JOIN items i ON i.id = ri.item_id
-            WHERE r.worker_session_id=?
-              AND TRIM(i.category) IN (?, ?)
-        """, (worker_session_id, "مشروبات", "مشاريب"))
-        quantity = cur.fetchone()[0] or 0
-        return f"{quantity:g}"
 
     def update_timer():
-        nonlocal timer_label, work_category_label
+        nonlocal timer_label
 
         if not current_session:
             return
@@ -361,8 +347,6 @@ def main_with_mode(root):
         seconds = total_seconds % 60
 
         timer_label.configure(text=f"⏱ {hours:02}:{minutes:02}:{seconds:02}")
-        if work_category_label is not None and work_category_label.winfo_exists():
-            work_category_label.configure(text=f"🥤 مبيعات اليوم: {current_worker_drinks_sold()}")
         root.after(1000, update_timer)
 
     if app_mode == "worker" and current_worker:
@@ -373,16 +357,6 @@ def main_with_mode(root):
         ).pack(side="right", padx=10)
 
     if app_mode == "worker" and current_session:
-        work_category_label = ctk.CTkLabel(
-            status_bar,
-            text="🥤 مبيعات اليوم: 0",
-            font=("Tahoma", 14, "bold"),
-            text_color="#f5c400",
-            width=220,
-            wraplength=210
-        )
-        work_category_label.pack(side="right", padx=10)
-
         timer_label = ctk.CTkLabel(
             status_bar,
             text="⏱ 00:00:00",
@@ -393,17 +367,28 @@ def main_with_mode(root):
 
     if app_mode == "worker" and current_session:
         def finish_work():
+            if state.cart:
+                messagebox.showwarning("إنهاء الوردية", "أكمل الطلب الحالي أو أفرغ السلة أولاً.", parent=root)
+                return
             try:
                 from adb import end_worker_session
-                end_worker_session(current_session["id"])
-            finally:
-                current_worker.clear()
-                current_session.clear()
-                show_mode_selection(root)
+                export = end_worker_session(current_session["id"], export_dir=Path.cwd() / "shift_exports")
+                if export is None:
+                    raise RuntimeError("الوردية مغلقة بالفعل")
+            except Exception as error:
+                messagebox.showerror("تعذر إنهاء الوردية", str(error), parent=root)
+                return
+            current_worker.clear()
+            current_session.clear()
+            show_mode_selection(root)
+            try:
+                os.startfile(export)
+            except OSError:
+                messagebox.showinfo("تم حفظ ملف المبيعات", str(export), parent=root)
 
         ctk.CTkButton(
             status_bar,
-            text="⏹ إنهاء العمل",
+            text="⏹ إنهاء الوردية",
             width=130,
             height=40,
             fg_color="#b23b2e",

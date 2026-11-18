@@ -41,6 +41,10 @@ def test_cashier_search_and_whole_code_scan(monkeypatch):
     monkeypatch.setattr(cashier, "conn", db)
     monkeypatch.setattr(cashier, "cart", {})
     window = ctk.CTk()
+    if sys.platform == "win32":
+        import ctypes
+        # Tk generates named Latin keys using the active OS keyboard layout.
+        ctypes.windll.user32.LoadKeyboardLayoutW("00000409", 1)
     callback_errors = []
     window.report_callback_exception = lambda *error: callback_errors.append(error)
     window.geometry("1000x700")
@@ -62,6 +66,16 @@ def test_cashier_search_and_whole_code_scan(monkeypatch):
         window.update()
         assert window.focus_get() == search
         assert cashier.cart == {}
+
+        # A scanner burst can arrive while the user's search entry owns focus.
+        for key in "12345678":
+            search.event_generate("<KeyPress>", keysym=key)
+        search.event_generate("<Return>")
+        window.update()
+        assert search.get() == "test"
+        assert window.focus_get() == search
+        assert cashier.cart["Test item"]["qty"] == 1
+        cashier.cart.clear()
 
         window.focus_force()
         window.update()

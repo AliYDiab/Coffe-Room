@@ -12,10 +12,10 @@ from utils import clear, get_item_stock
 from modules.cart_layout import calculate_cart_layout, diff_cart_rows
 from modules.cashier_ui import cashier_content_mode
 from modules.scanned_item import resolve_scanned_item
+from modules.shift_reports import drinks_sold, session_receipts
 from modules.receipt_preview import show_receipt_preview
 from modules.barcode_scanner import (
     install_global_key_handlers,
-    remove_scanned_text_from_focused_input,
 )
 
 
@@ -148,7 +148,7 @@ def show_cashier(main, refresh_callback):
     # =====================================================
     # BARCODE SCANNER
     # =====================================================
-    scan_buffer = {"chars": "", "timer": None, "started": None, "last": None}
+    scan_buffer = {"timer": None}
     SCAN_TIMEOUT_MS = 500
     last_completed_scan = {"time": None}
     
@@ -157,6 +157,8 @@ def show_cashier(main, refresh_callback):
     import tkinter as tk
     scanner_input = tk.Entry(root, takefocus=False)
     scanner_input.place(x=-1000, y=0, width=1, height=1)
+    search_input = search_entry._entry
+    search_burst = {"text": "", "offset": 0, "last": 0, "timer": None}
 
     def focus_scanner(event=None):
         if event is not None:
@@ -170,8 +172,13 @@ def show_cashier(main, refresh_callback):
         if root.winfo_exists():
             scanner_input.focus_set()
 
-    root.after_idle(focus_scanner)
     window = root.winfo_toplevel()
+
+    def focus_scanner_on_startup():
+        if window.focus_get() != search_input:
+            focus_scanner()
+
+    root.after_idle(focus_scanner_on_startup)
     click_binding = window.bind("<ButtonRelease-1>", focus_scanner, add="+")
 
     def remove_click_binding(event):
@@ -186,25 +193,15 @@ def show_cashier(main, refresh_callback):
                 root.after_cancel(scan_buffer["timer"])
             except Exception:
                 pass
-        code = scan_buffer["chars"].strip()
-        started = scan_buffer["started"]
-        last = scan_buffer["last"]
-        scan_buffer["chars"] = ""
+        code = scanner_input.get().strip()
+        scanner_input.delete(0, "end")
         scan_buffer["timer"] = None
-        scan_buffer["started"] = None
-        scan_buffer["last"] = None
         if not code:
             return
         last_completed_scan["time"] = time.monotonic()
         item = resolve_scanned_item(cur, code)
         if item:
-            remove_scanned_text_from_focused_input(root, code)
-            add_to_cart(item)
-            try:
-                import winsound
-                winsound.Beep(1200, 80)
-            except Exception:
-                pass
+            accept_scan(item)
         else:
             print("Barcode not found:", code)
 
@@ -218,12 +215,7 @@ def show_cashier(main, refresh_callback):
         
         if not event.char or not event.char.isprintable():
             return
-        now = time.monotonic()
-        if not scan_buffer["chars"]:
-            scan_buffer["started"] = now
-
-        scan_buffer["chars"] += event.char
-        scan_buffer["last"] = now
+        scanner_input.insert("end", event.char)
         if scan_buffer["timer"] is not None:
             root.after_cancel(scan_buffer["timer"])
         scan_buffer["timer"] = root.after(SCAN_TIMEOUT_MS, flush_scan)
@@ -240,8 +232,9 @@ def show_cashier(main, refresh_callback):
             return
         if scan_buffer["timer"] is not None:
             root.after_cancel(scan_buffer["timer"])
-        now = time.monotonic()
-        scan_buffer.update(chars=code, timer=None, started=now, last=now)
+        scan_buffer["timer"] = None
+        scanner_input.delete(0, "end")
+        scanner_input.insert(0, code)
         flush_scan()
         return "break"
 
@@ -252,18 +245,74 @@ def show_cashier(main, refresh_callback):
     except Exception:
         print("Warning: Could not bind keyboard events for barcode scanning")
 
-    def on_search_focus_in(event):
-        if scan_buffer["timer"] is not None:
-            root.after_cancel(scan_buffer["timer"])
-            scan_buffer["timer"] = None
-        scan_buffer["chars"] = ""
+    def accept_scan(item):
+        last_completed_scan["time"] = time.monotonic()
+        add_to_cart(item)
+        try:
+            import winsound
+            winsound.Beep(1200, 80)
+        except (ImportError, RuntimeError):
+            pass
 
-    def on_search_focus_out(event):
-        scan_buffer["chars"] = ""
+    def clear_search_burst():
+        if search_burst["timer"] is not None:
+            root.after_cancel(search_burst["timer"])
+        search_burst.update(text="", last=0, timer=None)
 
-    search_entry._entry.bind("<FocusIn>",  on_search_focus_in)
-    search_entry._entry.bind("<FocusOut>", on_search_focus_out)
-    search_entry._entry.bind("<Escape>", lambda e: focus_scanner())
+    def find_search_scan(code):
+        if len(code) >= 6 or code.upper().startswith(("ITEM_ID:", "ITEM:")):
+            return resolve_scanned_item(cur, code, allow_bare_id=False)
+        return None
+
+    def finish_search_scan(event=None):
+        code, offset = search_burst["text"], search_burst["offset"]
+        clear_search_burst()
+        if not code or search_input.get()[offset:offset + len(code)] != code:
+            return
+        item = find_search_scan(code)
+        if item:
+            search_input.delete(offset, offset + len(code))
+            accept_scan(item)
+            return "break"
+
+    def observe_search_key(event):
+        if not event.char or not event.char.isprintable() or event.state & 0x0c:
+            if event.keysym not in {"Shift_L", "Shift_R"}:
+                clear_search_burst()
+            return
+        now = time.monotonic()
+        position = search_input.index("insert")
+        if search_input.selection_present():
+            position = search_input.index("sel.first")
+            clear_search_burst()
+        if (now - search_burst["last"] > .085
+                or position != search_burst["offset"] + len(search_burst["text"])):
+            clear_search_burst()
+        if not search_burst["text"]:
+            search_burst["offset"] = position
+        if search_burst["timer"] is not None:
+            root.after_cancel(search_burst["timer"])
+        search_burst["text"] += event.char
+        search_burst["last"] = now
+        search_burst["timer"] = root.after(145, finish_search_scan)
+
+    def paste_into_search(event):
+        clear_search_burst()
+        try:
+            code = root.clipboard_get().strip()
+        except tk.TclError:
+            return
+        item = find_search_scan(code)
+        if item:
+            accept_scan(item)
+            return "break"
+
+    search_input.bind("<KeyPress>", observe_search_key, add="+")
+    search_input.bind("<Return>", finish_search_scan, add="+")
+    search_input.bind("<KP_Enter>", finish_search_scan, add="+")
+    search_input.bind("<<Paste>>", paste_into_search, add="+")
+    search_input.bind("<FocusOut>", lambda event: finish_search_scan(), add="+")
+    search_input.bind("<Escape>", lambda e: focus_scanner())
 
     # =====================================================
     # AVAILABILITY HELPERS
@@ -447,27 +496,28 @@ def show_cashier(main, refresh_callback):
 
     def load_recent_receipts():
         """Render receipts in the default cashier area until a product is searched."""
+        session_id = current_session.get("id")
         ctk.CTkLabel(
             content_frame,
-            text="🧾 أحدث الفواتير",
+            text="🧾 فواتير الوردية" if session_id else "🧾 أحدث الفواتير",
             font=("Tahoma", 22, "bold"),
         ).pack(anchor="e", padx=15, pady=(15, 8))
 
-        cur.execute("""
-            SELECT id, date, total
-            FROM receipts
-            ORDER BY date DESC
-            LIMIT 30
-        """)
-        receipts = cur.fetchall()
+        if session_id:
+            receipts = [row[:3] for row in session_receipts(
+                conn, session_id, current_session["start_time"], datetime.now().isoformat())]
+        else:
+            receipts = cur.execute("SELECT id, date, total FROM receipts ORDER BY date DESC LIMIT 30").fetchall()
         receipt_names = {}
         if receipts:
             ids = [receipt[0] for receipt in receipts]
-            placeholders = ",".join("?" for _ in ids)
-            cur.execute(f"SELECT receipt_id, name FROM receipt_items WHERE receipt_id IN ({placeholders})", ids)
-            for rid, item_name in cur.fetchall():
-                if item_name:
-                    receipt_names.setdefault(rid, []).append(item_name)
+            for offset in range(0, len(ids), 500):
+                batch = ids[offset:offset + 500]
+                placeholders = ",".join("?" for _ in batch)
+                cur.execute(f"SELECT receipt_id, name FROM receipt_items WHERE receipt_id IN ({placeholders})", batch)
+                for rid, item_name in cur.fetchall():
+                    if item_name:
+                        receipt_names.setdefault(rid, []).append(item_name)
         if not receipts:
             ctk.CTkLabel(
                 content_frame,
@@ -527,6 +577,10 @@ def show_cashier(main, refresh_callback):
 
     footer = ctk.CTkFrame(cart_panel, fg_color="transparent")
     footer.pack(fill="x", padx=5, pady=(2, 8))
+    drink_counter = None
+    if current_session.get("id"):
+        drink_counter = ctk.CTkLabel(footer, text_color="#ded38d", font=("Tahoma", 16, "bold"))
+        drink_counter.pack(fill="x", padx=8)
     total_box = ctk.CTkFrame(footer, fg_color="#5a4316", corner_radius=14)
     total_box.pack(fill="x", padx=8, pady=(0, 6))
     ctk.CTkLabel(total_box, text="الإجمالي", font=("Tahoma", 14)).pack(side="left", padx=12, pady=9)
@@ -609,6 +663,10 @@ def show_cashier(main, refresh_callback):
         }
 
     def load_cart():
+        if drink_counter is not None:
+            count = drinks_sold(conn, current_session["id"], current_session["start_time"],
+                                datetime.now().isoformat())
+            drink_counter.configure(text=f"🥤 مشروبات الوردية المباعة: {count:g}")
         changes = diff_cart_rows(rendered_cart, cart)
         for name in changes.removed:
             widgets = cart_row_widgets.pop(name, None)
@@ -943,7 +1001,7 @@ def show_cashier(main, refresh_callback):
                 return
             if root.winfo_toplevel().focus_get() == search_entry._entry:
                 return "break"
-            if scan_buffer["chars"].strip():
+            if scanner_input.get().strip():
                 flush_scan()
                 return "break"
             if (last_completed_scan["time"] is not None
@@ -959,9 +1017,15 @@ def show_cashier(main, refresh_callback):
 
     try:
         install_global_key_handlers(root, None, checkout_on_enter)
-        scanner_input.bind("<Return>", checkout_on_enter)
-        scanner_input.bind("<KP_Enter>", checkout_on_enter)
-        scanner_input.bind("<Tab>", lambda e: (flush_scan(), "break")[1])
+
+        def scanner_suffix(event):
+            if event.keysym == "Tab" and not scanner_input.get():
+                return
+            flush_scan()
+            return "break"
+
+        for suffix in ("<Return>", "<KP_Enter>", "<Tab>"):
+            scanner_input.bind(suffix, scanner_suffix)
     except Exception:
         print("Warning: Could not bind Enter key for checkout")
 

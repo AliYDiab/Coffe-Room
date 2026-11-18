@@ -1,10 +1,17 @@
 import tkinter as tk
+import pytest
 
 from modules.barcode_scanner import install_global_key_handlers
 
 
-def test_keyboard_events_reach_scanner_binding_with_different_focus():
+@pytest.fixture(scope="module")
+def window():
     window = tk.Tk()
+    yield window
+    window.destroy()
+
+
+def test_keyboard_events_reach_scanner_binding_with_different_focus(window):
     page = tk.Frame(window)
     page.pack()
     entry = tk.Entry(page)
@@ -25,11 +32,10 @@ def test_keyboard_events_reach_scanner_binding_with_different_focus():
             assert ''.join(received) == "12345"
             received.clear()
     finally:
-        window.destroy()
+        page.destroy()
 
 
-def test_clipboard_paste_is_distinct_from_scanner_key_events():
-    window = tk.Tk()
+def test_clipboard_paste_is_distinct_from_scanner_key_events(window):
     page = tk.Frame(window)
     page.pack()
     entry = tk.Entry(page)
@@ -47,4 +53,4 @@ def test_clipboard_paste_is_distinct_from_scanner_key_events():
         assert entry.get() == "12345"
         assert not received
     finally:
-        window.destroy()
+        page.destroy()
