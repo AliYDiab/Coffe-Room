@@ -12,10 +12,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install firebase-admin
+      - run: pip install firebase-admin customtkinter packaging requests pillow pytest -r requirements-shift-reports.txt
+        working-directory: cafe
       - run: python -m py_compile main.py firebase_sync.py backup_manager.py modules/backups.py
         working-directory: cafe
-      - run: python -m unittest discover -s tests -v
+      - run: python -m pytest -q
         working-directory: cafe
 
   mobile-tests:
